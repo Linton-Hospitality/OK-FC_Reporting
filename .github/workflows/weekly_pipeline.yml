@@ -23,11 +23,11 @@ jobs:
       - name: Install dependencies
         run: pip install openpyxl python-dotenv anthropic requests
 
-      - name: Debug - list files
-        run: ls -la
-
       - name: Run Ferncrest pipeline
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: python ferncrest_pipeline.py
+        run: |
+          echo "Working directory: $(pwd)"
+          ls -la
+          python ferncrest_pipeline.py
