@@ -40,7 +40,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), ov
 # ─────────────────────────────────────────────────────────────────────────────
 CONFIG = {
     "ytd_file":       "ok-fc_occupancy_2026ytd.xlsx",
-    "pace_file":      "ok-fc_occupancy_pace_90day.xlsx",
+    "pace_file":      "ok-fc_occupancy_pace_150day.xlsx",
     "workbook":       "ferncrest_ok-fc_v2.xlsx",
     "property_code":  "OK-FC",
     "total_units":    12,
