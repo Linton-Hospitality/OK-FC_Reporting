@@ -2,9 +2,9 @@ name: Ferncrest Weekly Pipeline
 
 on:
   schedule:
-    # 8am Central Daylight Time (CDT) = 13:00 UTC
-    # Note: in winter (CST, UTC-6) this runs at 7am — adjust to 14:00 if preferred
-    - cron: '0 13 * * 1'
+    # 10am Pacific Daylight Time (PDT) = 17:00 UTC
+    # Note: in winter (PST, UTC-8) this runs at 9am — adjust to 18:00 if preferred
+    - cron: '0 17 * * 1'
   workflow_dispatch:   # allows manual trigger from GitHub UI
 
 jobs:
