@@ -32,6 +32,7 @@ import sys
 from dotenv import load_dotenv
 
 # Load .env from the same directory as this script
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
