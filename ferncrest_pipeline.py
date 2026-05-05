@@ -31,17 +31,15 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# Load .env from the same directory as this script
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
+load_dotenv("/Users/stephcleung/Library/CloudStorage/GoogleDrive-stephanie@lintonhospitality.com/Shared drives/Ferncrest/1_Locations/02_OK-FC/2_Finance/AssetManagement/.env", override=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG — update these paths to match your folder structure
 # ─────────────────────────────────────────────────────────────────────────────
 CONFIG = {
-    "ytd_file":       "ok-fc_occupancy_2026ytd.xlsx",
-    "pace_file":      "ok-fc_occupancy_pace_150day.xlsx",
-    "workbook":       "ferncrest_ok-fc_v2.xlsx",
+    "ytd_file":       "/Users/stephcleung/Library/CloudStorage/GoogleDrive-stephanie@lintonhospitality.com/Shared drives/Ferncrest/1_Locations/02_OK-FC/2_Finance/AssetManagement/ok-fc_occupancy_2026ytd.xlsx",
+    "pace_file":      "/Users/stephcleung/Library/CloudStorage/GoogleDrive-stephanie@lintonhospitality.com/Shared drives/Ferncrest/1_Locations/02_OK-FC/2_Finance/AssetManagement/ok-fc_occupancy_pace_150day.xlsx",
+    "workbook":       "/Users/stephcleung/Library/CloudStorage/GoogleDrive-stephanie@lintonhospitality.com/Shared drives/Ferncrest/1_Locations/02_OK-FC/2_Finance/AssetManagement/ferncrest_ok-fc_v2.xlsx",
     "property_code":  "OK-FC",
     "total_units":    12,
     "fiscal_year":    2026,
@@ -707,14 +705,21 @@ def generate_html_report(ytd_data, pace_data, as_of_date,
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 7: Post Slack digest
 # ─────────────────────────────────────────────────────────────────────────────
-def post_slack_digest(ytd_data, pace_data, as_of_date):
+def post_slack_digest(ytd_data, pace_data, as_of_date,
+                      prev_pace_data=None):
     """
     Posts a weekly digest to Slack via webhook.
-    Set SLACK_WEBHOOK_URL environment variable to enable.
+    Focuses on trend direction, pick-up velocity, ADR movement,
+    and specific actionable flags — not raw pace vs budget.
+
+    prev_pace_data: pace snapshot from last week (same format as pace_data).
+                    Used to calculate week-over-week pick-up.
+                    If None, pick-up delta is not shown.
     """
     import urllib.request
     import json
     import os
+    from datetime import date, timedelta
 
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
@@ -724,69 +729,150 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
 
     print("\n📣 Posting Slack digest...")
 
+    today = date.today()
+
+    # ── YTD numbers ──
     ytd_revenue = sum(d["revenue"] for d in ytd_data.values())
     ytd_nights  = sum(d["nights_sold"] for d in ytd_data.values())
     ytd_avail   = sum(d["available_nights"] for d in ytd_data.values())
     ytd_occ     = ytd_nights / ytd_avail if ytd_avail else 0
     ytd_adr     = ytd_revenue / ytd_nights if ytd_nights else 0
 
-    budget_occ_fwd = {
-        5:0.30, 6:0.30, 7:0.40, 8:0.55, 9:0.20, 10:0.50, 11:0.20, 12:0.10
-    }
+    # ── Pick-up this week (total nights booked across all future months) ──
+    total_on_books_now  = sum(d["nights_sold"] for d in pace_data.values())
+    total_on_books_prev = sum(d["nights_sold"] for d in prev_pace_data.values())                           if prev_pace_data else None
+    weekly_pickup = total_on_books_now - total_on_books_prev                     if total_on_books_prev is not None else None
 
-    pace_lines = []
-    for month in sorted(pace_data.keys())[:3]:  # Show next 3 months
-        data    = pace_data[month]
-        bud_occ = budget_occ_fwd.get(month, 0.25)
-        occ     = data["occupancy_pct"]
-        vs      = occ - bud_occ
-        flag    = "🔴" if vs < -0.05 else "🟢" if vs > 0.05 else "🟡"
-        adr_str = f" · ADR ${data['adr']:.0f}" if data['adr'] > 0 else ""
-        pace_lines.append(
-            f"{flag} *{MONTH_NAMES[month]}:* {data['nights_sold']} nights "
-            f"({occ:.1%} paced vs {bud_occ:.0%} budget){adr_str}"
-        )
+    # ── Biggest mover this week ──
+    biggest_mover = None
+    biggest_pickup = 0
+    if prev_pace_data:
+        for month, data in pace_data.items():
+            prev = prev_pace_data.get(month, {}).get("nights_sold", 0)
+            pickup = data["nights_sold"] - prev
+            if pickup > biggest_pickup:
+                biggest_pickup = pickup
+                biggest_mover  = (MONTH_NAMES[month], pickup)
 
-    message = {
-        "blocks": [
-            {
-                "type": "header",
-                "text": {
-                    "type": "plain_text",
-                    "text": f"Ferncrest Flint Creek — Weekly Digest {as_of_date}"
-                }
-            },
-            {
-                "type": "section",
-                "fields": [
-                    {"type":"mrkdwn","text":f"*YTD Revenue*\n${ytd_revenue:,.0f}"},
-                    {"type":"mrkdwn","text":f"*YTD Occupancy*\n{ytd_occ:.1%}"},
-                    {"type":"mrkdwn","text":f"*YTD ADR*\n${ytd_adr:.0f}"},
-                    {"type":"mrkdwn","text":f"*Nights Sold YTD*\n{ytd_nights}"},
-                ]
-            },
-            {"type": "divider"},
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "*90-Day Pace*\n" + "\n".join(pace_lines)
-                }
-            },
-            {
-                "type": "context",
-                "elements": [
-                    {
-                        "type": "mrkdwn",
-                        "text": f"Generated by Ferncrest Pipeline · {as_of_date} · Open dashboard for full detail + AI recommendations"
-                    }
-                ]
+    # ── ADR on new bookings (weighted avg across future months) ──
+    adr_months = [(d["adr"], d["nights_sold"])
+                  for d in pace_data.values()
+                  if d["adr"] > 0 and d["nights_sold"] > 0]
+    blended_adr = (sum(a * n for a, n in adr_months) / sum(n for _, n in adr_months)
+                   if adr_months else 0)
+
+    # ── Weekends needing attention (next 21 days, < 30% booked) ──
+    # Approximate from monthly pace — flag months within 3 weeks
+    urgent_months = []
+    for month, data in sorted(pace_data.items()):
+        arr_date  = date(CONFIG["fiscal_year"], month, 1)
+        weeks_out = max(0, (arr_date - today).days // 7)
+        occ       = data["occupancy_pct"]
+        if weeks_out <= 3 and occ < 0.30 and data["nights_sold"] > 0:
+            urgent_months.append((MONTH_NAMES[month], occ, weeks_out))
+
+    # ── One AI action item (pull from recommendations if available) ──
+    # We pass the top recommendation as a simple string
+    # This gets populated by get_ai_recommendations separately
+    # For now derive a simple heuristic action
+    fwd_months = sorted(pace_data.keys())
+    action_month = None
+    for m in fwd_months[:3]:
+        d = pace_data[m]
+        arr  = date(CONFIG["fiscal_year"], m, 1)
+        wks  = max(0, (arr - today).days // 7)
+        if wks <= 6 and d["nights_sold"] > 0:
+            action_month = (MONTH_NAMES[m], d["nights_sold"],
+                            d["occupancy_pct"], d["adr"], wks)
+            break
+
+    if action_month:
+        mo, nights, occ, adr, wks = action_month
+        if occ < 0.20:
+            action_text = (f"*This week:* {mo} is {wks} weeks out with "
+                           f"{nights} nights booked ({occ:.1%}). "
+                           f"Push group outreach and packages — volume gap, not a rate issue.")
+        elif adr > 280:
+            action_text = (f"*This week:* {mo} early bookers paying ${adr:.0f} ADR. "
+                           f"Hold rate — do not discount to chase volume.")
+        else:
+            action_text = (f"*This week:* {mo} pacing at {occ:.1%} with "
+                           f"${adr:.0f} ADR on books. Monitor — no action needed yet.")
+    else:
+        action_text = "*This week:* No near-term months require immediate action."
+
+    # ── Build Slack blocks ──
+    prop_code = CONFIG["property_code"]
+    prop_name = "Flint Creek" if prop_code == "OK-FC" else prop_code
+
+    # Pick-up line
+    if weekly_pickup is not None:
+        pickup_str = (f"*+{weekly_pickup} nights* picked up this week"
+                      if weekly_pickup >= 0
+                      else f"*{weekly_pickup} nights* net change this week")
+        if biggest_mover:
+            pickup_str += f" · biggest mover: *{biggest_mover[0]}* (+{biggest_mover[1]})"
+    else:
+        pickup_str = f"*{total_on_books_now} nights* total on books across all future months"
+
+    # ADR line
+    adr_str = (f"*ADR on books:* ${blended_adr:.0f} (blended across forward months)"
+               if blended_adr > 0 else "*ADR on books:* No forward bookings yet")
+
+    # Urgent flag
+    if urgent_months:
+        mo, occ, wks = urgent_months[0]
+        urgent_str = f"*Watch:* {mo} is {wks} weeks out at {occ:.1%} booked — needs attention"
+    else:
+        urgent_str = "*No urgent near-term flags*"
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"{prop_name} — Monday Digest  {as_of_date}"
             }
-        ]
-    }
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type":"mrkdwn","text":f"*YTD Revenue*\n${ytd_revenue:,.0f}"},
+                {"type":"mrkdwn","text":f"*YTD Occ*\n{ytd_occ:.1%}"},
+                {"type":"mrkdwn","text":f"*YTD ADR*\n${ytd_adr:.0f}"},
+                {"type":"mrkdwn","text":f"*Nights Sold YTD*\n{ytd_nights}"},
+            ]
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":chart_with_upwards_trend: *This Week*\n{pickup_str}\n{adr_str}\n{urgent_str}"
+            }
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":dart: {action_text}"
+            }
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": (f"Ferncrest Pipeline · {as_of_date} · "
+                             f"Open dashboard for full pace detail + AI recommendations")
+                }
+            ]
+        }
+    ]
 
     try:
-        payload = json.dumps(message).encode()
+        payload = json.dumps({"blocks": blocks}).encode()
         req = urllib.request.Request(
             webhook_url,
             data=payload,
