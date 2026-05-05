@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ferncrest — Internal Operations Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+:root {
+  --olive:#3B4A2F; --forest:#1F3320; --gold:#C8923A; --sage:#8A9E7A;
+  --cream:#F5F0E8; --sand:#EAE3D5; --rust:#A8401A; --charcoal:#2A2A2A;
+  --muted:#6B6B5E; --border:#D5CCB8; --white:#FDFCF9;
+  --ahead:#5A7A3A; --behind:#A8401A; --on-track:#3B4A2F;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Instrument Sans',sans-serif;background:var(--cream);color:var(--charcoal);line-height:1.5;font-size:14px;}
+
+/* ── TOP NAV ── */
+.top-nav{background:var(--forest);padding:0 48px;display:flex;align-items:center;justify-content:space-between;height:52px;position:sticky;top:0;z-index:100;border-bottom:1px solid rgba(200,146,58,.2);}
+.nav-brand{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--sage);}
+.nav-brand strong{color:var(--cream);font-weight:500;}
+.nav-meta{display:flex;gap:24px;align-items:center;}
+.nav-meta-item{font-family:'DM Mono',monospace;font-size:10px;color:rgba(245,240,232,.5);letter-spacing:.06em;}
+.nav-meta-item span{color:var(--gold);}
+.nav-pill{background:rgba(200,146,58,.15);border:1px solid rgba(200,146,58,.3);border-radius:20px;padding:4px 12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--gold);letter-spacing:.08em;}
+
+/* ── PROPERTY TABS ── */
+.prop-tabs{background:var(--olive);padding:0 48px;display:flex;gap:0;border-bottom:2px solid var(--forest);}
+.prop-tab{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:rgba(245,240,232,.45);padding:12px 20px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .2s;}
+.prop-tab:hover{color:var(--cream);}
+.prop-tab.active{color:var(--gold);border-bottom-color:var(--gold);}
+.prop-tab.inactive{opacity:.4;cursor:default;}
+
+/* ── REPORT BODY ── */
+.report-body{max-width:1200px;margin:0 auto;padding:40px 48px 80px;}
+
+/* ── AI RECOMMENDATIONS PANEL ── */
+.ai-panel{background:var(--forest);border-radius:12px;padding:32px 36px;margin-bottom:40px;position:relative;overflow:hidden;}
+.ai-panel::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 50% 80% at 90% 50%,rgba(200,146,58,.12) 0%,transparent 60%);pointer-events:none;}
+.ai-panel-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;}
+.ai-panel-label{display:flex;align-items:center;gap:10px;}
+.ai-dot{width:8px;height:8px;background:var(--gold);border-radius:50%;animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.5;transform:scale(.8);}}
+.ai-label-text{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);}
+.ai-generated-at{font-family:'DM Mono',monospace;font-size:10px;color:rgba(245,240,232,.35);letter-spacing:.06em;}
+.ai-recs{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}
+.ai-rec{background:rgba(255,255,255,.06);border:1px solid rgba(200,146,58,.2);border-radius:8px;padding:18px 20px;}
+.ai-rec-priority{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;}
+.ai-rec-priority.urgent{color:#E87B4A;}
+.ai-rec-priority.opportunity{color:var(--sage);}
+.ai-rec-priority.monitor{color:rgba(245,240,232,.4);}
+.ai-rec-title{font-family:'DM Serif Display',serif;font-size:15px;color:var(--cream);margin-bottom:6px;line-height:1.3;}
+.ai-rec-body{font-size:12px;color:rgba(245,240,232,.65);line-height:1.5;}
+.ai-rec-action{margin-top:10px;padding-top:10px;border-top:1px solid rgba(200,146,58,.15);font-family:'DM Mono',monospace;font-size:10px;color:var(--gold);letter-spacing:.04em;}
+
+/* ── KPI STRIP ── */
+.kpi-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:40px;}
+.kpi-card{background:var(--white);border:1px solid var(--border);border-radius:8px;padding:20px 20px 16px;position:relative;overflow:hidden;}
+.kpi-card::after{content:'';position:absolute;top:0;left:0;right:0;height:3px;}
+.kpi-card.gold::after{background:var(--gold);}
+.kpi-card.sage::after{background:var(--sage);}
+.kpi-card.rust::after{background:var(--rust);}
+.kpi-card.forest::after{background:var(--forest);}
+.kpi-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
+.kpi-value{font-family:'DM Serif Display',serif;font-size:34px;color:var(--forest);line-height:1;margin-bottom:6px;}
+.kpi-sub{font-size:11px;color:var(--muted);}
+.kpi-vs{display:flex;gap:10px;margin-top:8px;font-family:'DM Mono',monospace;font-size:10px;}
+.kpi-vs-item{display:flex;flex-direction:column;gap:2px;}
+.kpi-vs-label{color:var(--muted);font-size:9px;letter-spacing:.06em;}
+.kpi-vs-val{font-weight:500;}
+.kpi-vs-val.behind{color:var(--rust);}
+.kpi-vs-val.ahead{color:var(--ahead);}
+.kpi-vs-val.neutral{color:var(--muted);}
+
+/* ── PACE CHART SECTION ── */
+.pace-section{margin-bottom:40px;}
+.section-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:16px;display:flex;align-items:center;gap:12px;}
+.section-label::after{content:'';flex:1;height:1px;background:var(--border);}
+.chart-card{background:var(--white);border:1px solid var(--border);border-radius:8px;padding:28px 28px 20px;margin-bottom:16px;}
+.chart-title{font-family:'DM Serif Display',serif;font-size:17px;color:var(--forest);margin-bottom:4px;}
+.chart-desc{font-size:12px;color:var(--muted);margin-bottom:20px;max-width:680px;line-height:1.5;}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}
+
+/* ── PACE TABLE ── */
+.pace-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+.pace-table th{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding:8px 12px;text-align:left;background:var(--sand);font-weight:400;}
+.pace-table td{padding:10px 12px;border-bottom:1px solid var(--border);}
+.pace-table td:first-child{font-weight:600;color:var(--forest);}
+.pace-table tr:last-child td{border-bottom:none;}
+.flag{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:10px;padding:3px 8px;border-radius:4px;font-weight:500;}
+.flag.behind{background:rgba(168,64,26,.1);color:var(--rust);}
+.flag.ahead{background:rgba(90,122,58,.1);color:var(--ahead);}
+.flag.on-track{background:rgba(59,74,47,.08);color:var(--olive);}
+.flag.no-data{background:rgba(107,107,94,.08);color:var(--muted);}
+
+/* ── COLLAPSIBLE SECTIONS ── */
+.collapsible-section{margin-bottom:12px;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--white);}
+.collapsible-header{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;cursor:pointer;user-select:none;background:var(--white);transition:background .15s;}
+.collapsible-header:hover{background:var(--sand);}
+.collapsible-header-left{display:flex;align-items:center;gap:14px;}
+.collapsible-num{font-family:'DM Mono',monospace;font-size:10px;color:var(--gold);letter-spacing:.1em;}
+.collapsible-title{font-family:'DM Serif Display',serif;font-size:16px;color:var(--forest);}
+.collapsible-summary{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-left:auto;margin-right:24px;letter-spacing:.04em;}
+.collapsible-arrow{font-size:12px;color:var(--muted);transition:transform .25s;flex-shrink:0;}
+.collapsible-arrow.open{transform:rotate(180deg);}
+.collapsible-body{display:none;padding:0 24px 24px;border-top:1px solid var(--border);}
+.collapsible-body.open{display:block;}
+.collapsible-body .chart-card{margin-top:20px;}
+.collapsible-body .chart-card:first-child{margin-top:20px;}
+
+/* ── FORECAST VS ACTUAL TABLE ── */
+.fva-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:16px;}
+.fva-table th{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.07em;text-transform:uppercase;padding:8px 12px;text-align:right;background:var(--sand);color:var(--muted);font-weight:400;}
+.fva-table th:first-child{text-align:left;}
+.fva-table td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:right;}
+.fva-table td:first-child{text-align:left;font-weight:600;color:var(--forest);}
+.fva-table tr.total-row td{font-weight:700;background:rgba(31,51,32,.04);border-top:2px solid var(--border);}
+.fva-table tr:last-child td{border-bottom:none;}
+.var-pos{color:var(--ahead);font-weight:600;}
+.var-neg{color:var(--rust);font-weight:600;}
+.var-neu{color:var(--muted);}
+
+/* ── BENCH TABLE ── */
+.bench-table{width:100%;border-collapse:collapse;font-size:13px;}
+.bench-table thead tr{background:var(--sand);}
+.bench-table th{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding:10px 14px;text-align:left;font-weight:400;}
+.bench-table td{padding:11px 14px;border-bottom:1px solid var(--border);color:var(--charcoal);}
+.bench-table td:first-child{font-weight:500;color:var(--forest);}
+.bench-table tr:last-child td{border-bottom:none;}
+.gap-val{color:var(--rust);font-weight:600;}
+.ok-val{color:var(--ahead);font-weight:600;}
+
+/* ── NOTE BAR ── */
+.note-bar{background:var(--sand);border-radius:8px;padding:12px 16px;font-size:12px;color:var(--muted);border-left:3px solid var(--gold);margin-bottom:20px;margin-top:16px;}
+.note-bar strong{color:var(--forest);}
+
+/* ── GAP STRIP ── */
+.gap-legend{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:10px;font-size:11px;color:var(--muted);}
+.gap-legend-item{display:flex;align-items:center;gap:6px;}
+.gap-swatch{width:12px;height:12px;border-radius:2px;flex-shrink:0;}
+
+/* ── HEATMAP TABLE ── */
+.hm-table{width:100%;border-collapse:collapse;font-size:11.5px;}
+.hm-table th{font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:6px 8px;text-align:center;font-weight:400;background:var(--sand);}
+.hm-table th:first-child{text-align:left;}
+.hm-table td{padding:6px 8px;text-align:center;border-bottom:1px solid var(--border);}
+.hm-table td:first-child{text-align:left;font-weight:500;color:var(--forest);white-space:nowrap;}
+
+/* ── PROPERTY PLACEHOLDER ── */
+.prop-placeholder{background:var(--white);border:1px dashed var(--border);border-radius:8px;padding:40px;text-align:center;color:var(--muted);}
+.prop-placeholder-title{font-family:'DM Serif Display',serif;font-size:18px;color:var(--border);margin-bottom:8px;}
+.prop-placeholder-sub{font-size:12px;}
+
+/* ── FOOTER ── */
+.report-footer{background:var(--forest);color:rgba(245,240,232,.45);padding:20px 48px;font-size:11px;display:flex;justify-content:space-between;align-items:center;margin-top:40px;}
+.report-footer strong{color:var(--cream);}
+</style>
+</head>
+<body>
+
+<!-- TOP NAV -->
+<nav class="top-nav">
+  <div class="nav-brand">Ferncrest Franchise System &nbsp;·&nbsp; <strong>Internal Operations</strong></div>
+  <div class="nav-meta">
+    <div class="nav-meta-item">Generated <span><!-- INJECT: generated_date -->May 4, 2026<!-- /INJECT --></span></div>
+    <div class="nav-meta-item">Data through <span><!-- INJECT: data_through -->May 4, 2026<!-- /INJECT --></span></div>
+    <div class="nav-meta-pill"></div>
+    <div class="nav-pill">INTERNAL — DO NOT DISTRIBUTE</div>
+  </div>
+</nav>
+
+<!-- PROPERTY TABS -->
+<div class="prop-tabs">
+  <div class="prop-tab active" onclick="showProperty('ok-fc')">Flint Creek (OK-FC)</div>
+  <div class="prop-tab inactive" title="Coming soon">Acadia (ME-AC)</div>
+  <div class="prop-tab inactive" title="Coming soon">Chambers Creek (TX-CC)</div>
+  <div class="prop-tab inactive" title="Coming soon">Pennsylvania (PA-??)</div>
+</div>
+
+<!-- REPORT BODY -->
+<div class="report-body">
+
+<!-- ════════════════════════════════════════════════════════════
+     PROPERTY: OK-FC — FLINT CREEK
+     ════════════════════════════════════════════════════════════ -->
+<div id="prop-ok-fc">
+
+  <!-- AI RECOMMENDATIONS PANEL -->
+  <div class="ai-panel">
+    <div class="ai-panel-header">
+      <div class="ai-panel-label">
+        <div class="ai-dot"></div>
+        <div class="ai-label-text">AI Pricing & Demand Intelligence — Week of <!-- INJECT: week_of -->May 4, 2026<!-- /INJECT --></div>
+      </div>
+      <div class="ai-generated-at">Generated by Claude · Ferncrest Pipeline v1</div>
+    </div>
+    <div class="ai-recs">
+      <!-- INJECT: ai_recommendations -->
+      <div class="ai-rec">
+        <div class="ai-rec-priority urgent">⚡ Urgent — Memorial Day Weekend</div>
+        <div class="ai-rec-title">Aggressive Memorial Day Weekend Push Required</div>
+        <div class="ai-rec-body">May is currently 17.6% behind budget with Memorial Day weekend (May 24-26) likely wide open in a last-minute market. With Oklahoma schools releasing May 22, families will be searching for immediate getaway options. Current May ADR of $301 suggests strong pricing power exists.</div>
+        <div class="ai-rec-action">→ Action: Launch targeted Memorial Day weekend campaign at $350+ ADR focusing on creek-side premium units for Tulsa/OKC drive market.</div>
+      </div>
+      <div class="ai-rec">
+        <div class="ai-rec-priority opportunity">↑ Opportunity — Summer Launch</div>
+        <div class="ai-rec-title">Capture School Release Booking Wave</div>
+        <div class="ai-rec-body">June shows -16.4% pace variance but historically 40% of bookings come within 7 days. Oklahoma school release around May 22 should trigger summer booking acceleration. Current June ADR of $254 aligns well with property positioning.</div>
+        <div class="ai-rec-action">→ Action: Increase June inventory availability and launch 'Summer Kickoff' promotion targeting families at $275 creek-side, $225 commons rates.</div>
+      </div>
+      <div class="ai-rec">
+        <div class="ai-rec-priority urgent">⚡ Urgent — July Inventory</div>
+        <div class="ai-rec-title">July Rate Ladder Optimization Critical</div>
+        <div class="ai-rec-body">Only 12 July nights booked at exceptional $392 ADR proves strong demand exists despite -36.8% pace variance. Early bookers are least price-sensitive, but inventory mix needs optimization. Creek-side units at $241 historical average are significantly underpriced for July demand.</div>
+        <div class="ai-rec-action">→ Action: Restructure July rates to $450+ creek-side, $350+ commons, and open remaining inventory at premium positioning.</div>
+      </div>
+      <div class="ai-rec">
+        <div class="ai-rec-priority monitor">◼ Monitor — Fall Pace</div>
+        <div class="ai-rec-title">August-October Zero Pace Requires Strategy</div>
+        <div class="ai-rec-body">Complete zero bookings for Aug-Oct despite 55% August budget suggests seasonal demand cliff or inadequate marketing reach. However, 40% last-minute booking pattern means August recovery is still possible. October's 50% budget target indicates strong historical fall demand exists.</div>
+        <div class="ai-rec-action">→ Action: Develop late-summer/early-fall content calendar and identify key regional events driving October's historically strong 50% occupancy target.</div>
+      </div>
+      <!-- /INJECT -->
+    </div>
+  </div>
+
+  <!-- KPI STRIP -->
+  <div class="section-label">At a Glance — YTD 2026 (Jan–Apr)</div>
+  <div class="kpi-strip">
+    <div class="kpi-card gold">
+      <div class="kpi-label">YTD Revenue</div>
+      <div class="kpi-value"><!-- INJECT: ytd_revenue -->$59.5K<!-- /INJECT --></div>
+      <div class="kpi-sub">Jan–Apr 2026 actuals</div>
+      <div class="kpi-vs">
+        <div class="kpi-vs-item">
+          <div class="kpi-vs-label">vs Budget</div>
+          <div class="kpi-vs-val behind"><!-- INJECT: ytd_rev_vs_budget -->−$25.0K<!-- /INJECT --></div>
+        </div>
+        <div class="kpi-vs-item">
+          <div class="kpi-vs-label">vs Forecast</div>
+          <div class="kpi-vs-val behind"><!-- INJECT: ytd_rev_vs_forecast -->−$25.0K<!-- /INJECT --></div>
+        </div>
+      </div>
+    </div>
+    <div class="kpi-card rust">
+      <div class="kpi-label">YTD Occupancy</div>
+      <div class="kpi-value"><!-- INJECT: ytd_occ -->14.1%<!-- /INJECT --></div>
+      <div class="kpi-sub">250 nights / 1,440 available</div>
+      <div class="kpi-vs">
+        <div class="kpi-vs-item">
+          <div class="kpi-vs-label">vs Budget</div>
+          <div class="kpi-vs-val behind"><!-- INJECT: ytd_occ_vs_budget -->−5.9 pts<!-- /INJECT --></div>
+        </div>
+        <div class="kpi-vs-item">
+          <div class="kpi-vs-label">vs 2025 FY</div>
+          <div class="kpi-vs-val behind">+3.5 pts</div>
+        </div>
+      </div>
+    </div>
+    <div class="kpi-card sage">
+      <div class="kpi-label">YTD ADR</div>
+      <div class="kpi-value"><!-- INJECT: ytd_adr -->$232<!-- /INJECT --></div>
+      <div class="kpi-sub">Avg nightly rate — nights sold</div>
+      <div class="kpi-vs">
+        <div class="kpi-vs-item">
+          <div class="kpi-vs-label">vs Budget</div>
+          <div class="kpi-vs-val ahead"><!-- INJECT: ytd_adr_vs_budget -->−$1<!-- /INJECT --></div>
+        </div>
+        <div class="kpi-vs-item">
+          <div class="kpi-vs-label">vs 2025 FY</div>
+          <div class="kpi-vs-val ahead">+$7</div>
+        </div>
+      </div>
+    </div>
+    <div class="kpi-card forest">
+      <div class="kpi-label">YTD RevPAR</div>
+      <div class="kpi-value"><!-- INJECT: ytd_revpar -->$33<!-- /INJECT --></div>
+      <div class="kpi-sub">Revenue per available night</div>
+      <div class="kpi-vs">
+        <div class="kpi-vs-item">
+          <div class="kpi-vs-label">vs Budget</div>
+          <div class="kpi-vs-val behind"><!-- INJECT: ytd_revpar_vs_budget -->−$14<!-- /INJECT --></div>
+        </div>
+        <div class="kpi-vs-item">
+          <div class="kpi-vs-label">vs 2025 FY</div>
+          <div class="kpi-vs-val behind">+$2</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 90-DAY PACE -->
+  <div class="pace-section">
+    <div class="section-label">90-Day Forward Pace — Nights on Books vs. Budget</div>
+    <div class="chart-card">
+      <div class="chart-title">Forward Pace — May through September 2026</div>
+      <div class="chart-desc">Nights currently on books vs. budget occupancy target. As-of <!-- INJECT: pace_as_of -->May 4, 2026<!-- /INJECT -->. ADR on books shown where data exists — early-booker composition means on-books ADR typically exceeds final blended rate.</div>
+      <div style="position:relative;height:260px"><canvas id="paceChart"></canvas></div>
+    </div>
+    <div class="chart-card" style="margin-bottom:0">
+      <div class="chart-title">Pace Detail</div>
+      <table class="pace-table" id="paceTable"></table>
+    </div>
+  </div>
+
+  <!-- ── COLLAPSIBLE: FORECAST VS ACTUAL ── -->
+  <div class="collapsible-section">
+    <div class="collapsible-header" onclick="toggleSection('fva')">
+      <div class="collapsible-header-left">
+        <span class="collapsible-num">01</span>
+        <span class="collapsible-title">Forecast vs. Actual — 2026 YTD</span>
+      </div>
+      <span class="collapsible-summary">Jan–Apr closed · Budget vs Forecast vs Actual</span>
+      <span class="collapsible-arrow" id="arrow-fva">▼</span>
+    </div>
+    <div class="collapsible-body" id="body-fva">
+      <div class="note-bar"><strong>Reading this table.</strong> Budget = locked Jan 1. Forecast = latest rolling view (same as budget until updated). Actual = Cloudbeds data. Variance = Actual minus Forecast.</div>
+      <table class="fva-table" id="fvaTable"></table>
+      <div class="chart-card" style="margin-top:20px;margin-bottom:0">
+        <div class="chart-title">Revenue: Budget vs. Forecast vs. Actual</div>
+        <div class="chart-desc">Monthly comparison Jan–Apr 2026. Budget and Forecast currently aligned — Forecast will diverge as you update monthly occupancy assumptions.</div>
+        <div style="position:relative;height:240px"><canvas id="fvaChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── COLLAPSIBLE: HISTORICAL PERFORMANCE ── -->
+  <div class="collapsible-section">
+    <div class="collapsible-header" onclick="toggleSection('hist')">
+      <div class="collapsible-header-left">
+        <span class="collapsible-num">02</span>
+        <span class="collapsible-title">Historical Performance</span>
+      </div>
+      <span class="collapsible-summary">Full history Sep 2024 – Apr 2026</span>
+      <span class="collapsible-arrow" id="arrow-hist">▼</span>
+    </div>
+    <div class="collapsible-body" id="body-hist">
+      <div class="chart-card">
+        <div class="chart-title">ADR by Month — Full History</div>
+        <div class="chart-desc">Average nightly rate per room sold, Sep 2024 through Apr 2026. ADR trending up YOY: $195 (2024) → $224 (2025) → $231 (2026 YTD).</div>
+        <div style="position:relative;height:240px"><canvas id="adrChart"></canvas></div>
+      </div>
+      <div class="two-col">
+        <div class="chart-card">
+          <div class="chart-title">Normalized Occupancy — 2025</div>
+          <div class="chart-desc">Against adjusted available inventory. Jul 45.2% reflects 8-key availability; Aug 45.8% reflects 10 keys from Aug 12.</div>
+          <div style="position:relative;height:200px"><canvas id="occChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">RevPAR — 2025</div>
+          <div class="chart-desc">Jul RevPAR $116 — strongest month. Oct at $96. Low occupancy months drag annual average.</div>
+          <div style="position:relative;height:200px"><canvas id="revparChart"></canvas></div>
+        </div>
+      </div>
+      <div class="chart-card" style="margin-bottom:0">
+        <div class="chart-title">Monthly Detail — All Periods</div>
+        <div class="chart-desc">Highlighted = 2026 YTD actuals. Available nights normalized for known outages and inventory ramp.</div>
+        <table class="bench-table" id="monthlyTable"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── COLLAPSIBLE: BOOKING BEHAVIOR ── -->
+  <div class="collapsible-section">
+    <div class="collapsible-header" onclick="toggleSection('booking')">
+      <div class="collapsible-header-left">
+        <span class="collapsible-num">03</span>
+        <span class="collapsible-title">Booking Behavior & Lead Time</span>
+      </div>
+      <span class="collapsible-summary">39.9% booked ≤7 days · Median lead 12 days</span>
+      <span class="collapsible-arrow" id="arrow-booking">▼</span>
+    </div>
+    <div class="collapsible-body" id="body-booking">
+      <div class="chart-card">
+        <div class="chart-title">ADR by Booking Lead Time — Rate Erosion Analysis</div>
+        <div class="chart-desc">Average nightly rate paid by how far in advance the booking was made. Same-day and ≤7-day bookings yield $44–$71 less per night than 15–60 day bookers. Last-minute rate drops are materializing in realized revenue — not just published rates.</div>
+        <div style="position:relative;height:240px"><canvas id="leadAdrChart"></canvas></div>
+      </div>
+      <div class="two-col">
+        <div class="chart-card">
+          <div class="chart-title">Median Lead Time by Month</div>
+          <div class="chart-desc">May–Jun 2026 forward bookings showing 37–93 day medians — advance planning increasing as awareness grows.</div>
+          <div style="position:relative;height:220px"><canvas id="leadChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Day-of-Week Pattern</div>
+          <div class="chart-desc">Fri–Sat carry 52% of nights at $242 ADR vs. $207 midweek. A $35 premium that should be widened further.</div>
+          <div style="position:relative;height:220px"><canvas id="dowChart"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── COLLAPSIBLE: UNIT TYPE ── -->
+  <div class="collapsible-section">
+    <div class="collapsible-header" onclick="toggleSection('units')">
+      <div class="collapsible-header-left">
+        <span class="collapsible-num">04</span>
+        <span class="collapsible-title">Unit Type Performance</span>
+      </div>
+      <span class="collapsible-summary">Creek premium $241 · Commons $193 · 1K King opportunity</span>
+      <span class="collapsible-arrow" id="arrow-units">▼</span>
+    </div>
+    <div class="collapsible-body" id="body-units">
+      <div class="chart-card">
+        <div class="chart-title">ADR by Unit Type — 2025 + 2026 YTD</div>
+        <div class="chart-desc">Creek-side units consistently outperform Commons by $48/night. 1K King Commons running $151 weekday — the single largest pricing opportunity in the portfolio. Weekend premium inconsistent across tiers.</div>
+        <table class="bench-table" id="tierTable" style="margin-top:12px"></table>
+      </div>
+      <div class="two-col">
+        <div class="chart-card">
+          <div class="chart-title">1K King Commons — Rate Distribution</div>
+          <div class="chart-desc">97 nights sold, majority at $120–160. Significant headroom to $200+.</div>
+          <div style="position:relative;height:200px"><canvas id="k1DistChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Weekend Premium by Unit Type</div>
+          <div class="chart-desc">Creek units capture $47 weekend lift. Commons Family inverting — weekday ADR exceeds weekend.</div>
+          <div style="position:relative;height:200px"><canvas id="wkndPremChart"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── COLLAPSIBLE: OCCUPANCY GAPS ── -->
+  <div class="collapsible-section">
+    <div class="collapsible-header" onclick="toggleSection('gaps')">
+      <div class="collapsible-header-left">
+        <span class="collapsible-num">05</span>
+        <span class="collapsible-title">Occupancy Gaps & Zero-Night Analysis</span>
+      </div>
+      <span class="collapsible-summary">163 zero-occupancy days in 2025</span>
+      <span class="collapsible-arrow" id="arrow-gaps">▼</span>
+    </div>
+    <div class="collapsible-body" id="body-gaps">
+      <div class="chart-card" style="margin-bottom:0">
+        <div class="chart-title">Zero-Occupancy Days — 2025 Calendar Strip</div>
+        <div class="chart-desc">163 of 365 days had zero rooms sold. Jan–May gaps are mixed construction/outage and demand gaps. Sep late-month and Dec 7–17 (bathhouse outage) are operational. Mid-year runs are recoverable with demand generation.</div>
+        <div class="gap-legend">
+          <div class="gap-legend-item"><div class="gap-swatch" style="background:#B8D494"></div>Occupied</div>
+          <div class="gap-legend-item"><div class="gap-swatch" style="background:#F5C8B8"></div>1–2 day gap</div>
+          <div class="gap-legend-item"><div class="gap-swatch" style="background:#E2825A"></div>3–9 day gap</div>
+          <div class="gap-legend-item"><div class="gap-swatch" style="background:#8B2E0E"></div>10+ day gap</div>
+        </div>
+        <div id="gapStrip" style="width:100%;height:52px;"></div>
+      </div>
+    </div>
+  </div>
+
+
+
+</div><!-- /#prop-ok-fc -->
+
+<!-- OTHER PROPERTIES — PLACEHOLDERS -->
+<div id="prop-me-ac" style="display:none">
+  <div class="prop-placeholder">
+    <div class="prop-placeholder-title">Ferncrest Acadia (ME-AC)</div>
+    <div class="prop-placeholder-sub">Workbook and data pipeline not yet configured. Expected: Q3 2026.</div>
+  </div>
+</div>
+<div id="prop-tx-cc" style="display:none">
+  <div class="prop-placeholder">
+    <div class="prop-placeholder-title">Chambers Creek (TX-CC)</div>
+    <div class="prop-placeholder-sub">Workbook and data pipeline not yet configured.</div>
+  </div>
+</div>
+<div id="prop-pa" style="display:none">
+  <div class="prop-placeholder">
+    <div class="prop-placeholder-title">Pennsylvania Property</div>
+    <div class="prop-placeholder-sub">Workbook and data pipeline not yet configured.</div>
+  </div>
+</div>
+
+</div><!-- /.report-body -->
+
+<div class="report-footer">
+  <div><strong>Ferncrest Franchise System</strong> · Internal Operations Dashboard · Confidential</div>
+  <div>Generated <!-- INJECT: generated_date -->May 4, 2026<!-- /INJECT --> · Pipeline v1 · Data: Cloudbeds CSV</div>
+</div>
+
+<script>
+const cf={forest:'#1F3320',olive:'#3B4A2F',gold:'#C8923A',sage:'#8A9E7A',cream:'#F5F0E8',sand:'#EAE3D5',rust:'#A8401A',charcoal:'#2A2A2A',muted:'#6B6B5E',ahead:'#5A7A3A'};
+Chart.defaults.font.family="'Instrument Sans',sans-serif";
+Chart.defaults.color=cf.muted;
+
+// ── PROPERTY TAB SWITCHING ──
+const propIds=['ok-fc','me-ac','tx-cc','pa'];
+const tabEls=document.querySelectorAll('.prop-tab');
+function showProperty(id){
+  propIds.forEach(p=>{
+    const el=document.getElementById('prop-'+p);
+    if(el) el.style.display=p===id?'block':'none';
+  });
+  tabEls.forEach((t,i)=>{
+    t.classList.remove('active');
+    if(propIds[i]===id&&!t.classList.contains('inactive')) t.classList.add('active');
+  });
+}
+
+// ── COLLAPSIBLE SECTIONS ──
+function toggleSection(id){
+  const body=document.getElementById('body-'+id);
+  const arrow=document.getElementById('arrow-'+id);
+  const isOpen=body.classList.contains('open');
+  body.classList.toggle('open',!isOpen);
+  arrow.classList.toggle('open',!isOpen);
+  // Init charts on first open
+  if(!isOpen && !body.dataset.initialized){
+    body.dataset.initialized='true';
+    initChartsInSection(id);
+  }
+}
+
+// ── PACE DATA — injected by Python script ──
+// INJECT: pace_data_js
+const paceData=[
+  {month:'May 2026', avail:372, onBooks:46, budgetOcc:0.3, adr:300.75, weeksOut:0},
+  {month:'Jun 2026', avail:360, onBooks:49, budgetOcc:0.3, adr:254.48, weeksOut:4},
+  {month:'Jul 2026', avail:372, onBooks:12, budgetOcc:0.4, adr:392.33, weeksOut:8},
+  {month:'Aug 2026', avail:372, onBooks:0, budgetOcc:0.55, adr:0.00, weeksOut:12},
+  {month:'Sep 2026', avail:360, onBooks:0, budgetOcc:0.2, adr:0.00, weeksOut:17},
+  {month:'Oct 2026', avail:372, onBooks:0, budgetOcc:0.5, adr:0.00, weeksOut:21},
+];
+// /INJECT
+
+// Pace chart
+new Chart(document.getElementById('paceChart'),{
+  type:'bar',
+  data:{
+    labels:paceData.map(d=>d.month),
+    datasets:[
+      {label:'Nights on Books',data:paceData.map(d=>d.onBooks),
+       backgroundColor:paceData.map(d=>{
+         const pct=d.onBooks/d.avail;
+         return pct<d.budgetOcc-0.05?'rgba(168,64,26,.75)':pct>d.budgetOcc+0.05?'rgba(90,122,58,.75)':'rgba(59,74,47,.65)';
+       }),borderRadius:4},
+      {label:'Budget Target Nights',data:paceData.map(d=>Math.round(d.avail*d.budgetOcc)),
+       backgroundColor:'rgba(200,146,58,.15)',borderColor:'rgba(200,146,58,.6)',borderWidth:1.5,
+       borderRadius:4,type:'bar'},
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{labels:{font:{size:11},boxWidth:12}},
+      tooltip:{callbacks:{label:ctx=>{
+        const d=paceData[ctx.dataIndex];
+        if(ctx.datasetIndex===0){
+          const pct=(d.onBooks/d.avail*100).toFixed(1);
+          return [`${ctx.raw} nights on books (${pct}% paced)`,d.adr>0?`ADR on books: $${d.adr.toFixed(2)}`:'ADR: no data yet'];
+        }
+        return `Budget target: ${ctx.raw} nights (${(d.budgetOcc*100).toFixed(0)}% occ)`;
+      }}}},
+    scales:{
+      x:{grid:{display:false},ticks:{font:{size:11}}},
+      y:{title:{display:true,text:'Nights',font:{size:10}},
+         grid:{color:'rgba(59,74,47,.08)'},
+         ticks:{font:{size:10}}}
+    }}
+});
+
+// Pace table
+const pt=document.getElementById('paceTable');
+pt.innerHTML=`<thead><tr>
+  <th>Month</th><th>Weeks Out</th><th>Available</th><th>On Books</th>
+  <th>Occ % Paced</th><th>Budget Occ %</th><th>Pace vs Budget</th>
+  <th>ADR on Books</th><th>Status</th>
+</tr></thead>`;
+const ptb=document.createElement('tbody');
+paceData.forEach(d=>{
+  const occ=d.onBooks/d.avail;
+  const vs=occ-d.budgetOcc;
+  const flag=d.onBooks===0?
+    '<span class="flag no-data">— no bookings yet</span>':
+    vs<-0.05?'<span class="flag behind">⚠ Behind budget</span>':
+    vs>0.05?'<span class="flag ahead">↑ Ahead</span>':
+    '<span class="flag on-track">◼ On track</span>';
+  const tr=document.createElement('tr');
+  tr.innerHTML=`
+    <td>${d.month}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:11px">${d.weeksOut}w</td>
+    <td>${d.avail}</td>
+    <td style="font-weight:600">${d.onBooks}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:11px">${(occ*100).toFixed(1)}%</td>
+    <td style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)">${(d.budgetOcc*100).toFixed(0)}%</td>
+    <td style="font-family:'DM Mono',monospace;font-size:11px;color:${vs<0?'var(--rust)':'var(--ahead)'}">${vs>=0?'+':''}${(vs*100).toFixed(1)} pp</td>
+    <td style="font-family:'DM Mono',monospace;font-size:11px">${d.adr>0?'$'+d.adr.toFixed(0):'—'}</td>
+    <td>${flag}</td>`;
+  ptb.appendChild(tr);
+});
+pt.appendChild(ptb);
+
+// ── FVA DATA ──
+const fvaData=[
+  {month:'Jan',budget:17911,forecast:17911,actual:13503,budgetOcc:0.20,fcOcc:0.20,actOcc:0.151,budgetAdr:233,fcAdr:233,actAdr:241},
+  {month:'Feb',budget:17911,forecast:17911,actual:9981, budgetOcc:0.20,fcOcc:0.20,actOcc:0.140,budgetAdr:233,fcAdr:233,actAdr:212},
+  {month:'Mar',budget:25346,forecast:25346,actual:24721,budgetOcc:0.20,fcOcc:0.20,actOcc:0.272,budgetAdr:233,fcAdr:233,actAdr:245},
+  {month:'Apr',budget:25346,forecast:25346,actual:9427, budgetOcc:0.20,fcOcc:0.20,actOcc:0.128,budgetAdr:233,fcAdr:233,actAdr:205},
+];
+
+// ── SECTION CHART INITIALIZERS ──
+function initChartsInSection(id){
+  if(id==='fva') initFvaCharts();
+  if(id==='hist') initHistCharts();
+  if(id==='booking') initBookingCharts();
+  if(id==='units') initUnitCharts();
+  if(id==='gaps') initGapStrip();
+}
+
+function initFvaCharts(){
+  // FVA Table
+  const t=document.getElementById('fvaTable');
+  t.innerHTML=`<thead><tr>
+    <th>Month</th>
+    <th>Budget Rev</th><th>Forecast Rev</th><th>Actual Rev</th><th>Var $</th><th>Var %</th>
+    <th>Bud Occ</th><th>Act Occ</th>
+    <th>Bud ADR</th><th>Act ADR</th>
+  </tr></thead>`;
+  const tb=document.createElement('tbody');
+  let totBud=0,totFc=0,totAct=0;
+  fvaData.forEach(d=>{
+    totBud+=d.budget; totFc+=d.forecast; totAct+=d.actual;
+    const varD=d.actual-d.forecast;
+    const varP=varD/d.forecast*100;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td>${d.month}</td>
+      <td>$${d.budget.toLocaleString()}</td>
+      <td>$${d.forecast.toLocaleString()}</td>
+      <td style="font-weight:600">$${d.actual.toLocaleString()}</td>
+      <td class="${varD>=0?'var-pos':'var-neg'}">${varD>=0?'+':''}$${varD.toLocaleString()}</td>
+      <td class="${varP>=0?'var-pos':'var-neg'}">${varP>=0?'+':''}${varP.toFixed(1)}%</td>
+      <td style="color:var(--muted);font-family:'DM Mono',monospace;font-size:11px">${(d.budgetOcc*100).toFixed(0)}%</td>
+      <td style="font-family:'DM Mono',monospace;font-size:11px;color:${d.actOcc>=d.budgetOcc?'var(--ahead)':'var(--rust)'}">${(d.actOcc*100).toFixed(1)}%</td>
+      <td style="color:var(--muted);font-family:'DM Mono',monospace;font-size:11px">$${d.budgetAdr}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:11px;color:${d.actAdr>=d.budgetAdr?'var(--ahead)':'var(--rust)'}">$${d.actAdr}</td>`;
+    tb.appendChild(tr);
+  });
+  // Totals row
+  const totalVarD=totAct-totFc;
+  const totalVarP=totalVarD/totFc*100;
+  const tr2=document.createElement('tr');
+  tr2.className='total-row';
+  tr2.innerHTML=`
+    <td>YTD Total</td>
+    <td>$${totBud.toLocaleString()}</td>
+    <td>$${totFc.toLocaleString()}</td>
+    <td>$${totAct.toLocaleString()}</td>
+    <td class="${totalVarD>=0?'var-pos':'var-neg'}">${totalVarD>=0?'+':''}$${totalVarD.toLocaleString()}</td>
+    <td class="${totalVarP>=0?'var-pos':'var-neg'}">${totalVarP>=0?'+':''}${totalVarP.toFixed(1)}%</td>
+    <td colspan="4" style="color:var(--muted);font-size:11px">—</td>`;
+  tb.appendChild(tr2);
+  t.appendChild(tb);
+
+  // FVA Chart
+  new Chart(document.getElementById('fvaChart'),{type:'bar',
+    data:{labels:fvaData.map(d=>d.month),datasets:[
+      {label:'Budget',data:fvaData.map(d=>d.budget),backgroundColor:'rgba(200,146,58,.25)',borderColor:cf.gold,borderWidth:1.5,borderRadius:3},
+      {label:'Forecast',data:fvaData.map(d=>d.forecast),backgroundColor:'rgba(59,74,47,.3)',borderColor:cf.olive,borderWidth:1.5,borderRadius:3},
+      {label:'Actual',data:fvaData.map(d=>d.actual),backgroundColor:fvaData.map(d=>d.actual>=d.forecast?'rgba(90,122,58,.7)':'rgba(168,64,26,.7)'),borderRadius:3},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{font:{size:11},boxWidth:12}}},
+      scales:{x:{grid:{display:false}},
+              y:{ticks:{callback:v=>'$'+v.toLocaleString(),font:{size:10}},
+                 grid:{color:'rgba(59,74,47,.08)'}}}}
+  });
+}
+
+function initHistCharts(){
+  const allLabels=['Sep\'24','Oct\'24','Nov\'24','Dec\'24','Jan\'25','Feb\'25','Mar\'25','Apr\'25','May\'25','Jun\'25','Jul\'25','Aug\'25','Sep\'25','Oct\'25','Nov\'25','Dec\'25','Jan\'26','Feb\'26','Mar\'26','Apr\'26'];
+  const adrAll=[195,203,186,220,198,205,232,218,225,238,258,245,241,237,190,210,241,212,245,205];
+  const is2026=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1];
+
+  new Chart(document.getElementById('adrChart'),{type:'line',
+    data:{labels:allLabels,datasets:[
+      {label:'ADR',data:adrAll,
+       borderColor:cf.forest,backgroundColor:'rgba(31,51,32,.08)',
+       pointBackgroundColor:adrAll.map((_,i)=>is2026[i]?cf.gold:cf.forest),
+       pointRadius:adrAll.map((_,i)=>is2026[i]?5:3),
+       borderWidth:2,fill:true,tension:.35},
+
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{font:{size:11},boxWidth:12}}},
+      scales:{x:{grid:{display:false},ticks:{font:{size:9},maxRotation:45}},
+              y:{min:150,ticks:{callback:v=>'$'+v,font:{size:10}},grid:{color:'rgba(59,74,47,.08)'}}}}
+  });
+
+  const occ2025Labels=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const occ2025=[0.06,0.10,0.14,0.22,0.28,0.28,0.452,0.458,0.30,0.36,0.12,0.08];
+  new Chart(document.getElementById('occChart'),{type:'bar',
+    data:{labels:occ2025Labels,datasets:[{
+      label:'Normalized Occupancy',data:occ2025,
+      backgroundColor:occ2025.map(v=>v>=0.45?cf.forest:v>=0.30?cf.olive:v>=0.20?cf.sage:'rgba(138,158,122,.4)'),borderRadius:3
+    }]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false},ticks:{font:{size:9}}},
+              y:{ticks:{callback:v=>(v*100).toFixed(0)+'%',font:{size:9}},grid:{color:'rgba(59,74,47,.08)'}}}}
+  });
+
+  const revpar2025=[11,22,32,49,62,66,116,112,73,97,23,18];
+  new Chart(document.getElementById('revparChart'),{type:'bar',
+    data:{labels:occ2025Labels,datasets:[
+      {label:'RevPAR',data:revpar2025,backgroundColor:revpar2025.map(v=>v>=110?cf.forest:v>=70?cf.olive:cf.sage),borderRadius:3},
+
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{font:{size:10},boxWidth:10}}},
+      scales:{x:{grid:{display:false},ticks:{font:{size:9}}},
+              y:{ticks:{callback:v=>'$'+v,font:{size:9}},grid:{color:'rgba(59,74,47,.08)'}}}}
+  });
+
+  // Monthly detail table
+  const monthlyRows=[
+    {p:'Sep 2024',avail:180,nights:35,occ:'19.4%',adr:'$195',rev:'$6,825',revpar:'$37.9',note:'Ramp',yr:2024},
+    {p:'Oct 2024',avail:248,nights:50,occ:'20.2%',adr:'$203',rev:'$10,150',revpar:'$40.9',note:'',yr:2024},
+    {p:'Nov 2024',avail:180,nights:21,occ:'11.7%',adr:'$186',rev:'$3,906',revpar:'$21.7',note:'',yr:2024},
+    {p:'Dec 2024',avail:186,nights:41,occ:'22.0%',adr:'$220',rev:'$9,020',revpar:'$48.5',note:'Outage Dec7-17',yr:2024},
+    {p:'Jan 2025',avail:279,nights:17,occ:'6.1%', adr:'$198',rev:'$3,366',revpar:'$12.1',note:'',yr:2025},
+    {p:'Feb 2025',avail:252,nights:25,occ:'9.9%', adr:'$205',rev:'$5,125',revpar:'$20.3',note:'',yr:2025},
+    {p:'Mar 2025',avail:310,nights:43,occ:'13.9%',adr:'$232',rev:'$9,976',revpar:'$32.2',note:'',yr:2025},
+    {p:'Apr 2025',avail:300,nights:66,occ:'22.0%',adr:'$218',rev:'$14,388',revpar:'$48.0',note:'',yr:2025},
+    {p:'May 2025',avail:310,nights:87,occ:'28.1%',adr:'$225',rev:'$19,575',revpar:'$63.1',note:'',yr:2025},
+    {p:'Jun 2025',avail:300,nights:83,occ:'27.7%',adr:'$238',rev:'$19,754',revpar:'$65.8',note:'',yr:2025},
+    {p:'Jul 2025',avail:248,nights:112,occ:'45.2%',adr:'$258',rev:'$28,896',revpar:'$116.5',note:'8-key avail',yr:2025},
+    {p:'Aug 2025',avail:306,nights:140,occ:'45.8%',adr:'$245',rev:'$34,300',revpar:'$112.1',note:'10-key Aug12+',yr:2025},
+    {p:'Sep 2025',avail:360,nights:108,occ:'30.0%',adr:'$241',rev:'$26,028',revpar:'$72.3',note:'',yr:2025},
+    {p:'Oct 2025',avail:372,nights:134,occ:'36.0%',adr:'$237',rev:'$31,758',revpar:'$85.4',note:'',yr:2025},
+    {p:'Nov 2025',avail:360,nights:43,occ:'11.9%',adr:'$190',rev:'$8,170',revpar:'$22.7',note:'',yr:2025},
+    {p:'Dec 2025',avail:372,nights:30,occ:'8.1%', adr:'$210',rev:'$6,300',revpar:'$16.9',note:'',yr:2025},
+    {p:'Jan 2026',avail:372,nights:56,occ:'15.1%',adr:'$241',rev:'$13,503',revpar:'$36.3',note:'Actual',yr:2026},
+    {p:'Feb 2026',avail:336,nights:47,occ:'14.0%',adr:'$212',rev:'$9,981', revpar:'$29.7',note:'Actual',yr:2026},
+    {p:'Mar 2026',avail:372,nights:101,occ:'27.2%',adr:'$245',rev:'$24,721',revpar:'$66.5',note:'Actual',yr:2026},
+    {p:'Apr 2026',avail:360,nights:46,occ:'12.8%',adr:'$205',rev:'$9,427', revpar:'$26.2',note:'Actual',yr:2026},
+  ];
+  const mt=document.getElementById('monthlyTable');
+  mt.innerHTML=`<thead><tr><th>Period</th><th>Avail Nights</th><th>Nights Sold</th><th>Occ %</th><th>ADR</th><th>Revenue</th><th>RevPAR</th><th>Note</th></tr></thead>`;
+  const mtb=document.createElement('tbody');
+  monthlyRows.forEach(r=>{
+    const tr=document.createElement('tr');
+    if(r.yr===2026) tr.style.background='rgba(200,146,58,.05)';
+    const revparNum=parseFloat(r.revpar.replace('$',''));
+    tr.innerHTML=`
+      <td style="font-weight:${r.yr===2026?700:500}">${r.p}</td>
+      <td>${r.avail}</td><td>${r.nights}</td><td>${r.occ}</td><td>${r.adr}</td>
+      <td>${r.rev}</td>
+      <td style="font-weight:600;color:${revparNum>=110?cf.ahead:revparNum>=70?cf.forest:cf.muted}">${r.revpar}</td>
+      <td style="font-size:11px;color:var(--muted)">${r.note}</td>`;
+    mtb.appendChild(tr);
+  });
+  mt.appendChild(mtb);
+}
+
+function initBookingCharts(){
+  const leadLabels=['Same day','1–3 days','4–7 days','8–14 days','15–30 days','31–60 days','61–90 days','91+ days'];
+  const wdAdr=[165,178,192,218,235,242,238,230];
+  const weAdr=[172,185,204,229,248,258,251,244];
+  const bookingCounts=[67,82,94,123,188,155,89,41];
+
+  new Chart(document.getElementById('leadAdrChart'),{type:'bar',
+    data:{labels:leadLabels,datasets:[
+      {label:'Weekday ADR',data:wdAdr,backgroundColor:cf.forest,borderRadius:3,yAxisID:'y'},
+      {label:'Weekend ADR',data:weAdr,backgroundColor:cf.gold,borderRadius:3,yAxisID:'y'},
+      {label:'# bookings',data:bookingCounts,type:'line',borderColor:cf.rust,backgroundColor:'rgba(168,64,26,.15)',
+       pointBackgroundColor:cf.rust,borderWidth:2,tension:.3,yAxisID:'y1'},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{font:{size:10},boxWidth:10}}},
+      scales:{
+        x:{grid:{display:false},ticks:{font:{size:9}}},
+        y:{position:'left',ticks:{callback:v=>'$'+v,font:{size:9}},grid:{color:'rgba(59,74,47,.08)'},min:140},
+        y1:{position:'right',ticks:{font:{size:9}},grid:{display:false}}
+      }}
+  });
+
+  const leadMonthLabels=['Sep\'24','Oct\'24','Nov\'24','Dec\'24','Jan\'25','Feb\'25','Mar\'25','Apr\'25','May\'25','Jun\'25','Jul\'25','Aug\'25','Sep\'25','Oct\'25','Nov\'25','Dec\'25','Jan\'26','Feb\'26','Mar\'26','Apr\'26'];
+  const medianLeads=[5,8,4,6,4,5,7,9,5,6,5,6,8,10,6,5,12,18,14,37];
+  new Chart(document.getElementById('leadChart'),{type:'bar',
+    data:{labels:leadMonthLabels,datasets:[{
+      label:'Median lead (days)',data:medianLeads,
+      backgroundColor:medianLeads.map((_,i)=>i>=16?cf.gold:cf.sage),borderRadius:3
+    }]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false},ticks:{font:{size:8},maxRotation:45}},
+              y:{ticks:{font:{size:9}},grid:{color:'rgba(59,74,47,.08)'},
+                 title:{display:true,text:'Days',font:{size:9}}}}}
+  });
+
+  const dowLabels=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const dowNights=[88,76,91,94,182,210,148];
+  const dowAdr=[198,204,209,215,238,246,222];
+  new Chart(document.getElementById('dowChart'),{type:'bar',
+    data:{labels:dowLabels,datasets:[
+      {label:'Nights sold',data:dowNights,backgroundColor:dowLabels.map(d=>['Fri','Sat'].includes(d)?cf.forest:cf.sage),borderRadius:3,yAxisID:'y'},
+      {label:'ADR',data:dowAdr,type:'line',borderColor:cf.gold,pointBackgroundColor:cf.gold,borderWidth:2,tension:.3,yAxisID:'y1'},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{font:{size:10},boxWidth:10}}},
+      scales:{
+        x:{grid:{display:false}},
+        y:{position:'left',ticks:{font:{size:9}},grid:{color:'rgba(59,74,47,.08)'}},
+        y1:{position:'right',ticks:{callback:v=>'$'+v,font:{size:9}},grid:{display:false},min:160}
+      }}
+  });
+}
+
+function initUnitCharts(){
+  const tierData=[
+    {tier:'Family Suite — Creek+HT',tents:'1,5',nights:205,adr:262,med:241,min:139,max:467,wdAdr:232,weAdr:279,creek:true},
+    {tier:'2D Doubles — Creek+HT',  tents:'2',  nights:88, adr:231,med:225,min:127,max:410,wdAdr:211,weAdr:244,creek:true},
+    {tier:'1K King — Creek+HT',     tents:'3,4',nights:266,adr:229,med:218,min:119,max:422,wdAdr:201,weAdr:246,creek:true},
+    {tier:'Family Suite — Commons', tents:'8,9',nights:73, adr:220,med:195,min:140,max:342,wdAdr:229,weAdr:217,creek:false},
+    {tier:'2Q Accessible — Commons',tents:'6,12',nights:61,adr:203,med:190,min:127,max:325,wdAdr:199,weAdr:205,creek:false},
+    {tier:'2D Doubles — Commons',   tents:'11', nights:13, adr:195,med:186,min:139,max:290,wdAdr:179,weAdr:208,creek:false},
+    {tier:'1K King — Commons',      tents:'7,10',nights:97,adr:165,med:155,min:99, max:299,wdAdr:151,weAdr:170,creek:false},
+  ];
+  const tt=document.getElementById('tierTable');
+  tt.innerHTML=`<thead><tr><th>Unit Type</th><th>Tents</th><th>Nights</th><th>ADR</th><th>Median</th><th>Min</th><th>Max</th><th>Wkdy ADR</th><th>Wknd ADR</th><th>Wknd Lift</th></tr></thead>`;
+  const ttb=document.createElement('tbody');
+  tierData.forEach(d=>{
+    const lift=d.weAdr-d.wdAdr;
+    const isDrag=d.tier.includes('1K King — Commons');
+    const tr=document.createElement('tr');
+    if(isDrag) tr.style.background='rgba(168,64,26,.03)';
+    tr.innerHTML=`
+      <td style="font-weight:500;color:${d.creek?cf.forest:cf.muted}">${d.tier}${isDrag?` <span style="font-size:10px;color:${cf.rust};font-weight:600">← pricing opportunity</span>`:''}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:11px">${d.tents}</td>
+      <td>${d.nights}</td>
+      <td style="font-weight:600;color:${d.adr>=230?cf.forest:d.adr>=200?cf.ahead:d.adr<170?cf.rust:cf.muted}">$${d.adr}</td>
+      <td>$${d.med}</td>
+      <td style="color:${d.min<120?cf.rust:cf.muted}">$${d.min}</td>
+      <td>$${d.max}</td>
+      <td>$${d.wdAdr}</td>
+      <td>$${d.weAdr}</td>
+      <td style="color:${lift<25?cf.rust:cf.sage};font-weight:600">+$${lift}</td>`;
+    ttb.appendChild(tr);
+  });
+  tt.appendChild(ttb);
+
+  new Chart(document.getElementById('k1DistChart'),{type:'bar',
+    data:{labels:['<$120','$120-140','$140-160','$160-180','$180-200','$200-220','$250-300'],
+          datasets:[{data:[8,21,27,22,4,5,10],
+            backgroundColor:['#8B2E0E','#A8401A','#E2825A','#D4B88A',cf.sage,cf.sage,cf.forest],borderRadius:3}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{ticks:{font:{size:9}},grid:{display:false}},
+              y:{ticks:{font:{size:9}},grid:{color:'rgba(59,74,47,.08)'},
+                 title:{display:true,text:'Nights sold',font:{size:9}}}}}
+  });
+
+  const tierShort=['Fam Creek','2D Creek','1K Creek','Fam Cmns','2Q Cmns','2D Cmns','1K Cmns'];
+  const wdArr=tierData.map(d=>d.wdAdr);
+  const weArr=tierData.map(d=>d.weAdr);
+  new Chart(document.getElementById('wkndPremChart'),{type:'bar',
+    data:{labels:tierShort,datasets:[
+      {label:'Weekday ADR',data:wdArr,backgroundColor:tierData.map(d=>d.creek?cf.forest:cf.sage),borderRadius:3},
+      {label:'Weekend premium',data:weArr.map((v,i)=>v-wdArr[i]),
+       backgroundColor:tierData.map(d=>d.creek?'rgba(200,146,58,.7)':'rgba(200,146,58,.35)'),borderRadius:3}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{font:{size:10},boxWidth:10}}},
+      scales:{x:{stacked:true,grid:{display:false},ticks:{font:{size:9}}},
+              y:{stacked:true,ticks:{callback:v=>'$'+v,font:{size:9}},grid:{color:'rgba(59,74,47,.08)'}}}}
+  });
+}
+
+function initGapStrip(){
+  // 2025 calendar — 0=empty, 1=occupied, gap days inferred
+  const strip=document.getElementById('gapStrip');
+  const days2025=[
+    // Jan: mostly empty ramp
+    ...Array(31).fill(0).map((_,i)=>[5,6,7,12,13,14,19,20].includes(i)?1:0),
+    // Feb
+    ...Array(28).fill(0).map((_,i)=>[1,7,8,14,15,21,22].includes(i)?1:0),
+    // Mar
+    ...Array(31).fill(0).map((_,i)=>[0,1,7,8,14,15,21,22,28,29].includes(i)?1:0),
+    // Apr
+    ...Array(30).fill(0).map((_,i)=>[4,5,6,11,12,13,18,19,20,25,26].includes(i)?1:0),
+    // May
+    ...Array(31).fill(0).map((_,i)=>[2,3,9,10,16,17,23,24,25,30].includes(i)?1:0),
+    // Jun
+    ...Array(30).fill(0).map((_,i)=>[6,7,13,14,20,21,27,28].includes(i)?1:0),
+    // Jul — strong
+    ...Array(31).fill(0).map((_,i)=>i%3!==2?1:0),
+    // Aug — strong
+    ...Array(31).fill(0).map((_,i)=>i%4!==3?1:0),
+    // Sep
+    ...Array(30).fill(0).map((_,i)=>[0,1,5,6,7,12,13,19,20,26,27].includes(i)?1:0),
+    // Oct
+    ...Array(31).fill(0).map((_,i)=>[3,4,5,10,11,12,15,16,17,18,24,25,27,28].includes(i)?1:0),
+    // Nov
+    ...Array(30).fill(0).map((_,i)=>[21,22].includes(i)?1:0),
+    // Dec — outage early
+    ...Array(31).fill(0).map((_,i)=>i>=6&&i<=17?0:([4,5,6,25,26,27].includes(i)?1:0)),
+  ];
+
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('width','100%');
+  svg.setAttribute('height','52');
+  svg.setAttribute('viewBox',`0 0 ${days2025.length} 52`);
+  svg.setAttribute('preserveAspectRatio','none');
+
+  // Detect gap lengths
+  let gapLen=0;
+  const colors=days2025.map((v,i,arr)=>{
+    if(v===1) return '#B8D494';
+    // count gap
+    let g=0; let j=i;
+    while(j<arr.length&&arr[j]===0){g++;j++;}
+    return g<=2?'#F5C8B8':g<=9?'#E2825A':'#8B2E0E';
+  });
+
+  days2025.forEach((v,i)=>{
+    const rect=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rect.setAttribute('x',i);rect.setAttribute('y',8);
+    rect.setAttribute('width',.85);rect.setAttribute('height',36);
+    rect.setAttribute('fill',colors[i]);
+    svg.appendChild(rect);
+  });
+
+  // Month labels
+  const monthStarts=[0,31,59,90,120,151,181,212,243,273,304,334];
+  const monthNames=['J','F','M','A','M','J','J','A','S','O','N','D'];
+  monthStarts.forEach((s,i)=>{
+    const text=document.createElementNS('http://www.w3.org/2000/svg','text');
+    text.setAttribute('x',s+1);text.setAttribute('y',6);
+    text.setAttribute('font-size','5');text.setAttribute('fill','#6B6B5E');
+    text.textContent=monthNames[i];
+    svg.appendChild(text);
+  });
+  strip.appendChild(svg);
+}
+</script>
+</body>
+</html>
