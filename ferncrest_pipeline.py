@@ -31,15 +31,20 @@ import os
 import sys
 from dotenv import load_dotenv
 
-load_dotenv("/Users/stephcleung/Library/CloudStorage/GoogleDrive-stephanie@lintonhospitality.com/Shared drives/Ferncrest/1_Locations/02_OK-FC/2_Finance/AssetManagement/.env", override=True)
+# Detect if running on GitHub Actions
+_GDRIVE = "/Users/stephcleung/Library/CloudStorage/GoogleDrive-stephanie@lintonhospitality.com/Shared drives/Ferncrest/1_Locations/02_OK-FC/2_Finance AM/AssetManagement"
+_CI = os.environ.get("CI") == "true"
+_BASE = os.path.dirname(os.path.abspath(__file__)) if _CI else _GDRIVE
+
+load_dotenv(os.path.join(_BASE, ".env"), override=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONFIG — update these paths to match your folder structure
+# CONFIG — paths auto-switch between local Mac and GitHub Actions
 # ─────────────────────────────────────────────────────────────────────────────
 CONFIG = {
-    "ytd_file":       "/Users/stephcleung/Library/CloudStorage/GoogleDrive-stephanie@lintonhospitality.com/Shared drives/Ferncrest/1_Locations/02_OK-FC/2_Finance/AssetManagement/ok-fc_occupancy_2026ytd.xlsx",
-    "pace_file":      "/Users/stephcleung/Library/CloudStorage/GoogleDrive-stephanie@lintonhospitality.com/Shared drives/Ferncrest/1_Locations/02_OK-FC/2_Finance/AssetManagement/ok-fc_occupancy_pace_150day.xlsx",
-    "workbook":       "/Users/stephcleung/Library/CloudStorage/GoogleDrive-stephanie@lintonhospitality.com/Shared drives/Ferncrest/1_Locations/02_OK-FC/2_Finance/AssetManagement/ferncrest_ok-fc_v2.xlsx",
+    "ytd_file":       os.path.join(_BASE, "ok-fc_occupancy_2026ytd.xlsx"),
+    "pace_file":      os.path.join(_BASE, "ok-fc_occupancy_pace_150day.xlsx"),
+    "workbook":       os.path.join(_BASE, "ferncrest_ok-fc_v2.xlsx"),
     "property_code":  "OK-FC",
     "total_units":    12,
     "fiscal_year":    2026,
@@ -609,9 +614,13 @@ def generate_html_report(ytd_data, pace_data, as_of_date,
 
     # ── Last closed month ──
     last_month = max(ytd_data.keys())
-    data_through = f"{MONTH_NAMES[last_month]} 30, {CONFIG['fiscal_year']}" \
-                   if last_month in [4,6,9,11] \
-                   else f"{MONTH_NAMES[last_month]} {days_map[last_month]}, {CONFIG['fiscal_year']}"
+    today = date.today()
+    if last_month == today.month and CONFIG["fiscal_year"] == today.year:
+        data_through = today.strftime("%B %-d, %Y")
+    elif last_month in [4, 6, 9, 11]:
+        data_through = f"{MONTH_NAMES[last_month]} 30, {CONFIG['fiscal_year']}"
+    else:
+        data_through = f"{MONTH_NAMES[last_month]} {days_map[last_month]}, {CONFIG['fiscal_year']}"
 
     # ── Pace JS data block ──
     budget_occ_fwd = {
@@ -672,6 +681,63 @@ def generate_html_report(ytd_data, pace_data, as_of_date,
         html, flags=re.DOTALL
     )
 
+    # ── FVA JS data block ──
+    budget_occ_all = {
+        1:0.20, 2:0.20, 3:0.20, 4:0.20,
+        5:0.30, 6:0.30, 7:0.40, 8:0.55, 9:0.20, 10:0.50, 11:0.20, 12:0.10
+    }
+    budget_adr_val = 233
+    fva_rows = []
+
+    # Closed months
+    for month, data in sorted(ytd_data.items()):
+        if month < today.month:
+            bud_rev = round(budget_adr_val * units * budget_occ_all.get(month, 0.20) * days_map[month])
+            fva_rows.append(
+                f"  {{month:'{MONTH_NAMES[month]}',status:'closed',"
+                f"budget:{bud_rev},actual:{round(data['revenue'])},"
+                f"budgetOcc:{budget_occ_all.get(month,0.20)},actOcc:{data['occupancy_pct']},"
+                f"budgetAdr:{budget_adr_val},actAdr:{data['adr']}}},"
+            )
+
+    # Current month
+    if today.month in ytd_data or today.month in pace_data:
+        m = today.month
+        ytd_row  = ytd_data.get(m,  {"revenue":0,"nights_sold":0,"occupancy_pct":0,"adr":0})
+        pace_row = pace_data.get(m, {"nights_sold":0,"adr":0,"available_nights": units*days_map.get(m,30)})
+        bud_rev  = round(budget_adr_val * units * budget_occ_all.get(m, 0.30) * days_map.get(m, 30))
+        bud_nights = round(units * budget_occ_all.get(m, 0.30) * days_map.get(m, 30))
+        projected  = round(ytd_row["revenue"] + pace_row["nights_sold"] * (pace_row["adr"] or budget_adr_val))
+        pct_paced  = pace_row["nights_sold"] / bud_nights if bud_nights > 0 else 0
+        fva_rows.append(
+            f"  {{month:'{MONTH_NAMES[m]}',status:'current',"
+            f"budget:{bud_rev},actual:{round(ytd_row['revenue'])},projected:{projected},"
+            f"budgetOcc:{budget_occ_all.get(m,0.30)},actOcc:{ytd_row['occupancy_pct']},"
+            f"pctPaced:{round(pct_paced,3)},budgetNights:{bud_nights},"
+            f"onBooks:{pace_row['nights_sold']},adrOnBooks:{pace_row['adr']}}},"
+        )
+
+    # Forward months
+    for month, data in sorted(pace_data.items()):
+        if month > today.month:
+            bud_rev    = round(budget_adr_val * units * budget_occ_all.get(month, 0.25) * days_map.get(month, 30))
+            bud_nights = round(units * budget_occ_all.get(month, 0.25) * days_map.get(month, 30))
+            pct_paced  = data["nights_sold"] / bud_nights if bud_nights > 0 else 0
+            fva_rows.append(
+                f"  {{month:'{MONTH_NAMES[month]}',status:'forward',"
+                f"budget:{bud_rev},budgetOcc:{budget_occ_all.get(month,0.25)},"
+                f"actOcc:{data['occupancy_pct']},"
+                f"onBooks:{data['nights_sold']},budgetNights:{bud_nights},"
+                f"pctPaced:{round(pct_paced,3)},adrOnBooks:{data['adr']}}},"
+            )
+
+    fva_js = "const fvaData=[\n" + "\n".join(fva_rows) + "\n];"
+    html = re.sub(
+        r"// INJECT: fva_data_js\nconst fvaData=\[.*?\];",
+        f"// INJECT: fva_data_js\n{fva_js}",
+        html, flags=re.DOTALL
+    )
+
     # AI recommendations (only if API returned something)
     if recs_html:
         html = re.sub(
@@ -698,8 +764,31 @@ def generate_html_report(ytd_data, pace_data, as_of_date,
     with open(output_path, "w") as f:
         f.write(html)
 
-    print(f"  ✅ HTML report saved: {output_path}")
+    # Also save to Google Drive folder
+    gdrive_path = os.path.join(_GDRIVE, "ferncrest_internal_dashboard.html")
+    try:
+        with open(gdrive_path, "w") as f:
+            f.write(html)
+        print(f"  ✅ HTML report saved: {output_path} + Google Drive")
+    except Exception:
+        print(f"  ✅ HTML report saved: {output_path} (Google Drive save failed)")
+
     print(f"     Revenue: ${ytd_revenue:,.0f} | Occ: {ytd_occ:.1%} | ADR: ${ytd_adr:.0f} | RevPAR: ${ytd_revpar:.0f}")
+
+    # Auto-push updated HTML to FlintCreekReport GitHub Pages repo
+    import subprocess
+    flint_repo = os.path.expanduser("~/FlintCreekReport")
+    if os.path.isdir(flint_repo):
+        try:
+            import shutil
+            shutil.copy(output_path, os.path.join(flint_repo, "index.html"))
+            subprocess.run(["git", "-C", flint_repo, "add", "index.html"], check=True)
+            subprocess.run(["git", "-C", flint_repo, "commit", "-m",
+                            f"Update report {as_of_date}"], check=True)
+            subprocess.run(["git", "-C", flint_repo, "push"], check=True)
+            print(f"  ✅ Live report updated: https://linton-hospitality.github.io/FlintCreekReport/")
+        except Exception as e:
+            print(f"  ⚠️  Live report push failed: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -761,15 +850,65 @@ def post_slack_digest(ytd_data, pace_data, as_of_date,
     blended_adr = (sum(a * n for a, n in adr_months) / sum(n for _, n in adr_months)
                    if adr_months else 0)
 
-    # ── Weekends needing attention (next 21 days, < 30% booked) ──
-    # Approximate from monthly pace — flag months within 3 weeks
-    urgent_months = []
-    for month, data in sorted(pace_data.items()):
-        arr_date  = date(CONFIG["fiscal_year"], month, 1)
-        weeks_out = max(0, (arr_date - today).days // 7)
-        occ       = data["occupancy_pct"]
-        if weeks_out <= 3 and occ < 0.30 and data["nights_sold"] > 0:
-            urgent_months.append((MONTH_NAMES[month], occ, weeks_out))
+    # ── Weekend flags (next 6 weeks, Fri/Sat under 50% booked) ──
+    units = CONFIG["total_units"]
+    fiscal_year = CONFIG["fiscal_year"]
+
+    # Collect all daily rows from pace data
+    all_daily = []
+    for month, data in pace_data.items():
+        for row in data.get("daily_rows", []):
+            all_daily.append(row)
+
+    urgent_weekends = []
+    seen_weekends = set()
+
+    for row in all_daily:
+        date_str = row["date"]  # MM/DD format
+        try:
+            m, d = map(int, str(date_str).split("/"))
+            row_date = date(fiscal_year, m, d)
+        except (ValueError, AttributeError):
+            continue
+
+        # Only look at future Fridays within 6 weeks
+        days_out = (row_date - today).days
+        if days_out < 1 or days_out > 42:
+            continue
+
+        if row_date.weekday() != 4:  # 4 = Friday
+            continue
+
+        weekend_key = row_date.strftime("%m/%d")
+        if weekend_key in seen_weekends:
+            continue
+        seen_weekends.add(weekend_key)
+
+        fri_nights = row["nights_sold"]
+        sat_date   = row_date + timedelta(days=1)
+
+        # Find matching Saturday
+        sat_nights = 0
+        for row2 in all_daily:
+            try:
+                m2, d2 = map(int, str(row2["date"]).split("/"))
+                if date(fiscal_year, m2, d2) == sat_date:
+                    sat_nights = row2["nights_sold"]
+                    break
+            except (ValueError, AttributeError):
+                continue
+
+        total   = fri_nights + sat_nights
+        pct     = total / (units * 2)
+        wks_out = days_out // 7
+
+        if pct < 0.50:
+            urgent_weekends.append((
+                row_date.strftime("%b %-d"),
+                fri_nights, sat_nights, pct, wks_out
+            ))
+
+    urgent_weekends.sort(key=lambda x: x[4])
 
     # ── One AI action item (pull from recommendations if available) ──
     # We pass the top recommendation as a simple string
@@ -777,11 +916,14 @@ def post_slack_digest(ytd_data, pace_data, as_of_date,
     # For now derive a simple heuristic action
     fwd_months = sorted(pace_data.keys())
     action_month = None
-    for m in fwd_months[:3]:
+    for m in fwd_months[:4]:
         d = pace_data[m]
         arr  = date(CONFIG["fiscal_year"], m, 1)
-        wks  = max(0, (arr - today).days // 7)
-        if wks <= 6 and d["nights_sold"] > 0:
+        # Skip current month and past months
+        if arr.year == today.year and arr.month <= today.month:
+            continue
+        wks  = max(1, (arr - today).days // 7)
+        if wks <= 8 and d["nights_sold"] > 0:
             action_month = (MONTH_NAMES[m], d["nights_sold"],
                             d["occupancy_pct"], d["adr"], wks)
             break
@@ -819,12 +961,17 @@ def post_slack_digest(ytd_data, pace_data, as_of_date,
     adr_str = (f"*ADR on books:* ${blended_adr:.0f} (blended across forward months)"
                if blended_adr > 0 else "*ADR on books:* No forward bookings yet")
 
-    # Urgent flag
-    if urgent_months:
-        mo, occ, wks = urgent_months[0]
-        urgent_str = f"*Watch:* {mo} is {wks} weeks out at {occ:.1%} booked — needs attention"
+    # Weekend flags
+    if urgent_weekends:
+        lines = []
+        for wknd_label, fri_n, sat_n, pct, wks in urgent_weekends[:3]:
+            lines.append(
+                f"• *{wknd_label} wknd* — {wks}wk{'s' if wks != 1 else ''} out · "
+                f"Fri {fri_n}/{units} · Sat {sat_n}/{units} · {pct:.0%} booked"
+            )
+        urgent_str = "*Watch — low weekend bookings:*\n" + "\n".join(lines)
     else:
-        urgent_str = "*No urgent near-term flags*"
+        urgent_str = "*Weekends look solid — no flags in the next 6 weeks* ✅"
 
     blocks = [
         {
@@ -865,7 +1012,7 @@ def post_slack_digest(ytd_data, pace_data, as_of_date,
                 {
                     "type": "mrkdwn",
                     "text": (f"Ferncrest Pipeline · {as_of_date} · "
-                             f"Open dashboard for full pace detail + AI recommendations")
+                             f"<https://linton-hospitality.github.io/FlintCreekReport/|View Full Report>")
                 }
             ]
         }
