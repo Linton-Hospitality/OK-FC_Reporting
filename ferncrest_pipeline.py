@@ -26,9 +26,10 @@ What it does:
 import openpyxl
 from openpyxl import load_workbook
 from collections import defaultdict
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import os
 import sys
+import json
 from dotenv import load_dotenv
 
 # Detect if running on GitHub Actions
@@ -45,9 +46,22 @@ CONFIG = {
     "ytd_file":       os.path.join(_BASE, "ok-fc_occupancy_2026ytd.xlsx"),
     "pace_file":      os.path.join(_BASE, "ok-fc_occupancy_pace_150day.xlsx"),
     "workbook":       os.path.join(_BASE, "ferncrest_ok-fc_v2.xlsx"),
+    "snapshot_cache": os.path.join(_BASE, "pace_snapshot_cache.json"),
+    "full_report_url": "https://linton-hospitality.github.io/FlintCreekReport/",
     "property_code":  "OK-FC",
     "total_units":    12,
     "fiscal_year":    2026,
+}
+
+# ── OK-FC pace targets (Slack digest) — update seasonally ──────────────────
+# "weeks_out: fraction of target occupancy that should be booked by then"
+PACE_TARGETS_OKFC = {5: 0.10, 4: 0.25, 3: 0.35, 2: 0.50, 1: 0.65}
+
+# Target occupancy by arrival month (drives the forward pace table)
+TARGET_OCC_OKFC = {
+    1: 0.15, 2: 0.15, 3: 0.25, 4: 0.20,
+    5: 0.25, 6: 0.35, 7: 0.50, 8: 0.50,
+    9: 0.30, 10: 0.40, 11: 0.25, 12: 0.20,
 }
 
 # Days in each month for 2026 (non-leap year)
@@ -93,8 +107,8 @@ def parse_cloudbeds_export(filepath):
 
     # Validate headers
     headers = rows[0]
-    expected = ("Date", "Rooms Occupied Year 2026",
-                "ACCOMMODATIONS BOOKED 2026", "Revenue 2026")
+    expected = ("Date", "ADR 2026",
+                "ACCOMMODATIONS BOOKED 2026", "Room Rates 2026")
     if headers != expected:
         print(f"  ⚠️  Unexpected headers: {headers}")
         print(f"       Expected: {expected}")
@@ -109,7 +123,7 @@ def parse_cloudbeds_export(filepath):
 
     skipped = 0
     for row in rows[1:]:
-        date_str, occ_pct, booked, revenue = row
+        date_str, adr_val, booked, revenue = row
 
         # Skip blank or zero rows (no-bookings days still matter for
         # available nights calc, but zero revenue/bookings rows are fine)
@@ -131,7 +145,7 @@ def parse_cloudbeds_export(filepath):
         monthly[month]["revenue"]     += rev
         monthly[month]["daily_rows"].append({
             "date":        date_str,
-            "occ_pct":     float(occ_pct) if occ_pct else 0.0,
+            "adr":         float(adr_val) if adr_val else 0.0,
             "nights_sold": nights,
             "revenue":     rev,
         })
@@ -794,21 +808,248 @@ def generate_html_report(ytd_data, pace_data, as_of_date,
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 7: Post Slack digest
 # ─────────────────────────────────────────────────────────────────────────────
-def post_slack_digest(ytd_data, pace_data, as_of_date,
-                      prev_pace_data=None):
-    """
-    Posts a weekly digest to Slack via webhook.
-    Focuses on trend direction, pick-up velocity, ADR movement,
-    and specific actionable flags — not raw pace vs budget.
+def _flatten_daily_rows(parsed_data):
+    """Combines daily_rows across all months of a parsed Cloudbeds export
+    into a single {MM/DD: row} lookup."""
+    out = {}
+    for data in parsed_data.values():
+        for row in data.get("daily_rows", []):
+            out[row["date"]] = row
+    return out
 
-    prev_pace_data: pace snapshot from last week (same format as pace_data).
-                    Used to calculate week-over-week pick-up.
-                    If None, pick-up delta is not shown.
+
+def _load_pace_snapshot(path):
+    """Loads last week's daily on-books snapshot, if one was saved."""
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+    return None
+
+
+def _save_pace_snapshot(path, pace_daily, as_of_date):
+    """Saves this week's daily on-books + revenue snapshot for next week's
+    pickup comparison."""
+    snapshot = {
+        "as_of_date": as_of_date,
+        "on_books":   {d: row["nights_sold"] for d, row in pace_daily.items()},
+        "revenue":    {d: row["revenue"]     for d, row in pace_daily.items()},
+    }
+    try:
+        with open(path, "w") as f:
+            json.dump(snapshot, f, indent=2)
+    except OSError as e:
+        print(f"  ⚠️  Could not save pace snapshot cache: {e}")
+
+
+def _compute_pickup_stats(pace_daily, prev_snapshot, today, fiscal_year):
+    """Compares this week's daily on-books snapshot to last week's to derive
+    net pickup, ADR on new bookings, and pickup for near-term arrivals.
+    Returns None if no prior snapshot exists yet (first run)."""
+    if not prev_snapshot:
+        return None
+
+    prev_books = prev_snapshot.get("on_books", {})
+    prev_rev   = prev_snapshot.get("revenue", {})
+
+    pickup_total = 0
+    pickup_14d   = 0
+    rev_delta    = 0.0
+    nights_delta = 0
+
+    for d, row in pace_daily.items():
+        delta = row["nights_sold"] - prev_books.get(d, 0)
+        pickup_total += delta
+
+        if delta > 0:
+            rev_delta    += row["revenue"] - prev_rev.get(d, 0)
+            nights_delta += delta
+
+            try:
+                m, dd = map(int, d.split("/"))
+                row_date = date(fiscal_year, m, dd)
+                if 0 <= (row_date - today).days <= 14:
+                    pickup_14d += delta
+            except (ValueError, AttributeError):
+                pass
+
+    adr_new = (rev_delta / nights_delta) if nights_delta > 0 else 0
+
+    return {
+        "pickup_7d":  pickup_total,
+        "pickup_14d": pickup_14d,
+        "adr_new":    adr_new,
+    }
+
+
+def _build_forward_pace_table(pace_daily, today, weeks=5):
+    """Builds the 'next N weeks' forward pace table against OK-FC pace targets."""
+    units = CONFIG["total_units"]
+    monday_this_week = today - timedelta(days=today.weekday())
+
+    rows = []
+    for week_offset in range(weeks):
+        week_start = monday_this_week + timedelta(weeks=week_offset)
+        weeks_out  = week_offset + 1
+
+        booked = 0
+        for i in range(7):
+            key = (week_start + timedelta(days=i)).strftime("%m/%d")
+            row = pace_daily.get(key)
+            if row:
+                booked += row["nights_sold"]
+
+        avail      = units * 7
+        booked_pct = booked / avail if avail else 0
+        month      = week_start.month
+
+        monthly_target = TARGET_OCC_OKFC.get(month, 0.25)
+        pace_factor    = PACE_TARGETS_OKFC.get(weeks_out, PACE_TARGETS_OKFC[5])
+        target_pct     = monthly_target * (pace_factor / PACE_TARGETS_OKFC[1])
+
+        if weeks_out == 5:
+            flag = "⬜"
+        elif weeks_out == 4:
+            flag = "🟡" if booked_pct < target_pct * 0.80 else "✅"
+        elif booked_pct >= target_pct * 1.05:
+            flag = "✅"
+        elif booked_pct >= target_pct * 0.80:
+            flag = "🟡"
+        else:
+            flag = "🔴"
+
+        rows.append({
+            "week_label": f"{week_start.strftime('%b %-d')} wk",
+            "booked":     booked,
+            "avail":      avail,
+            "booked_pct": booked_pct,
+            "target_pct": target_pct,
+            "weeks_out":  weeks_out,
+            "flag":       flag,
+        })
+
+    return rows
+
+
+def _build_weekend_watch(pace_daily, today, weekends=4):
+    """Next N weekends (Fri+Sat), flagged per OK-FC weekend thresholds."""
+    units = CONFIG["total_units"]
+    days_until_friday = (4 - today.weekday()) % 7
+    next_friday = today + timedelta(days=days_until_friday)
+
+    rows = []
+    for i in range(weekends):
+        fri = next_friday + timedelta(weeks=i)
+        sat = fri + timedelta(days=1)
+
+        fri_row = pace_daily.get(fri.strftime("%m/%d"))
+        sat_row = pace_daily.get(sat.strftime("%m/%d"))
+        fri_booked = fri_row["nights_sold"] if fri_row else 0
+        sat_booked = sat_row["nights_sold"] if sat_row else 0
+
+        fri_pct = fri_booked / units
+        sat_pct = sat_booked / units
+        avg_pct = (fri_booked + sat_booked) / (units * 2)
+
+        if i == 0 and (fri_pct < 0.5 or sat_pct < 0.5):
+            flag = "🔴"
+        elif fri_pct < 0.30 and i <= 2:
+            flag = "🔴"
+        elif fri_pct < 0.60 and i <= 1:
+            flag = "🟡"
+        else:
+            flag = "🟢"
+
+        rows.append({
+            "label":      f"{fri.strftime('%b %-d')} wknd",
+            "weeks_out":  i,
+            "fri_booked": fri_booked,
+            "sat_booked": sat_booked,
+            "avg_pct":    avg_pct,
+            "flag":       flag,
+        })
+
+    return rows
+
+
+def _get_action_item(pickup_stats, pace_rows, weekend_rows):
+    """Calls Claude for a single-sentence action item; falls back to a
+    heuristic if the API key isn't set or the call fails."""
+    import urllib.request
+
+    # Worst pace gap in the action zone (weeks 1-4, excludes the horizon week)
+    worst = min(pace_rows[:4], key=lambda r: r["booked_pct"] - r["target_pct"])
+    weekend_summary = ", ".join(f"{w['label']} {w['flag']}" for w in weekend_rows)
+
+    if pickup_stats:
+        pickup_line = (f"Pickup last 7 days: {pickup_stats['pickup_7d']:+d} nights "
+                        f"(ADR on new bookings: ${pickup_stats['adr_new']:.0f}, "
+                        f"{pickup_stats['pickup_14d']} for arrivals within 14 days)")
+    else:
+        pickup_line = "Pickup last 7 days: no prior snapshot yet — comparison starts next week"
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        prompt = f"""You are the revenue manager for Ferncrest Flint Creek, a 12-key glamping property in Colcord, Oklahoma.
+Audience: internal marketing team and CEO. Tone: direct, one sentence, specific.
+
+Data for this week:
+- {pickup_line}
+- Most urgent pace gap: {worst['week_label']} at {worst['booked_pct']:.0%} booked vs {worst['target_pct']:.0%} target
+- Weekend flags: {weekend_summary}
+
+Property context:
+- Peak season is Jul-Aug with last-minute booking pattern (median 5-6 days lead time)
+- October is the strongest ADR month ($287 in 2025) — fall foliage driver
+- Commons units (Tents 6-12) have lowest occupancy — group bookings are the primary lever
+- Do not recommend rate cuts — occupancy gap is a demand/awareness problem not a price problem
+- Do not recommend discounting weekends
+
+Write one action sentence for the marketing team. Be specific about which week or weekend needs attention
+and what action to take (e.g. push organic content, send email to past guests, boost paid spend)."""
+
+        try:
+            payload = json.dumps({
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 200,
+                "messages": [{"role": "user", "content": prompt}]
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+                text = result["content"][0]["text"].strip()
+                print("  ✅ AI action item generated")
+                return text
+        except Exception as e:
+            print(f"  ⚠️  Claude API call failed: {e} — using heuristic action item")
+
+    # Heuristic fallback
+    if worst["flag"] == "🔴":
+        return (f"{worst['week_label']} is the most urgent gap at {worst['booked_pct']:.0%} booked vs "
+                f"{worst['target_pct']:.0%} target — push organic content and email past guests this week.")
+    urgent_wknd = next((w for w in weekend_rows if w["flag"] == "🔴"), None)
+    if urgent_wknd:
+        return (f"{urgent_wknd['label']} is under-booked — boost paid spend targeting "
+                f"last-minute drive-market guests.")
+    return "No urgent pace or weekend gaps this week — hold steady and monitor."
+
+
+def post_slack_digest(ytd_data, pace_data, as_of_date):
+    """
+    Posts the weekly Monday digest to Slack: pickup, forward pace,
+    weekend watch, and one action item.
     """
     import urllib.request
-    import json
-    import os
-    from datetime import date, timedelta
 
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
@@ -816,203 +1057,95 @@ def post_slack_digest(ytd_data, pace_data, as_of_date,
         print("   Set SLACK_WEBHOOK_URL environment variable to enable")
         return
 
-    print("\n📣 Posting Slack digest...")
+    print("\n📣 Building Slack digest...")
 
-    today = date.today()
-
-    # ── YTD numbers ──
-    ytd_revenue = sum(d["revenue"] for d in ytd_data.values())
-    ytd_nights  = sum(d["nights_sold"] for d in ytd_data.values())
-    ytd_avail   = sum(d["available_nights"] for d in ytd_data.values())
-    ytd_occ     = ytd_nights / ytd_avail if ytd_avail else 0
-    ytd_adr     = ytd_revenue / ytd_nights if ytd_nights else 0
-
-    # ── Pick-up this week (total nights booked across all future months) ──
-    total_on_books_now  = sum(d["nights_sold"] for d in pace_data.values())
-    total_on_books_prev = sum(d["nights_sold"] for d in prev_pace_data.values())                           if prev_pace_data else None
-    weekly_pickup = total_on_books_now - total_on_books_prev                     if total_on_books_prev is not None else None
-
-    # ── Biggest mover this week ──
-    biggest_mover = None
-    biggest_pickup = 0
-    if prev_pace_data:
-        for month, data in pace_data.items():
-            prev = prev_pace_data.get(month, {}).get("nights_sold", 0)
-            pickup = data["nights_sold"] - prev
-            if pickup > biggest_pickup:
-                biggest_pickup = pickup
-                biggest_mover  = (MONTH_NAMES[month], pickup)
-
-    # ── ADR on new bookings (weighted avg across future months) ──
-    adr_months = [(d["adr"], d["nights_sold"])
-                  for d in pace_data.values()
-                  if d["adr"] > 0 and d["nights_sold"] > 0]
-    blended_adr = (sum(a * n for a, n in adr_months) / sum(n for _, n in adr_months)
-                   if adr_months else 0)
-
-    # ── Weekend flags (next 6 weeks, Fri/Sat under 50% booked) ──
-    units = CONFIG["total_units"]
+    today       = date.today()
     fiscal_year = CONFIG["fiscal_year"]
+    units       = CONFIG["total_units"]
+    pace_daily  = _flatten_daily_rows(pace_data)
 
-    # Collect all daily rows from pace data
-    all_daily = []
-    for month, data in pace_data.items():
-        for row in data.get("daily_rows", []):
-            all_daily.append(row)
+    # ── Pickup vs last week's snapshot ──
+    prev_snapshot = _load_pace_snapshot(CONFIG["snapshot_cache"])
+    pickup_stats  = _compute_pickup_stats(pace_daily, prev_snapshot, today, fiscal_year)
+    _save_pace_snapshot(CONFIG["snapshot_cache"], pace_daily, as_of_date)
 
-    urgent_weekends = []
-    seen_weekends = set()
-
-    for row in all_daily:
-        date_str = row["date"]  # MM/DD format
-        try:
-            m, d = map(int, str(date_str).split("/"))
-            row_date = date(fiscal_year, m, d)
-        except (ValueError, AttributeError):
-            continue
-
-        # Only look at future Fridays within 6 weeks
-        days_out = (row_date - today).days
-        if days_out < 1 or days_out > 42:
-            continue
-
-        if row_date.weekday() != 4:  # 4 = Friday
-            continue
-
-        weekend_key = row_date.strftime("%m/%d")
-        if weekend_key in seen_weekends:
-            continue
-        seen_weekends.add(weekend_key)
-
-        fri_nights = row["nights_sold"]
-        sat_date   = row_date + timedelta(days=1)
-
-        # Find matching Saturday
-        sat_nights = 0
-        for row2 in all_daily:
-            try:
-                m2, d2 = map(int, str(row2["date"]).split("/"))
-                if date(fiscal_year, m2, d2) == sat_date:
-                    sat_nights = row2["nights_sold"]
-                    break
-            except (ValueError, AttributeError):
-                continue
-
-        total   = fri_nights + sat_nights
-        pct     = total / (units * 2)
-        wks_out = days_out // 7
-
-        if pct < 0.50:
-            urgent_weekends.append((
-                row_date.strftime("%b %-d"),
-                fri_nights, sat_nights, pct, wks_out
-            ))
-
-    urgent_weekends.sort(key=lambda x: x[4])
-
-    # ── One AI action item (pull from recommendations if available) ──
-    # We pass the top recommendation as a simple string
-    # This gets populated by get_ai_recommendations separately
-    # For now derive a simple heuristic action
-    fwd_months = sorted(pace_data.keys())
-    action_month = None
-    for m in fwd_months[:4]:
-        d = pace_data[m]
-        arr  = date(CONFIG["fiscal_year"], m, 1)
-        # Skip current month and past months
-        if arr.year == today.year and arr.month <= today.month:
-            continue
-        wks  = max(1, (arr - today).days // 7)
-        if wks <= 8 and d["nights_sold"] > 0:
-            action_month = (MONTH_NAMES[m], d["nights_sold"],
-                            d["occupancy_pct"], d["adr"], wks)
-            break
-
-    if action_month:
-        mo, nights, occ, adr, wks = action_month
-        if occ < 0.20:
-            action_text = (f"*This week:* {mo} is {wks} weeks out with "
-                           f"{nights} nights booked ({occ:.1%}). "
-                           f"Push group outreach and packages — volume gap, not a rate issue.")
-        elif adr > 280:
-            action_text = (f"*This week:* {mo} early bookers paying ${adr:.0f} ADR. "
-                           f"Hold rate — do not discount to chase volume.")
-        else:
-            action_text = (f"*This week:* {mo} pacing at {occ:.1%} with "
-                           f"${adr:.0f} ADR on books. Monitor — no action needed yet.")
+    if pickup_stats:
+        pickup_text = (
+            f"• *{pickup_stats['pickup_7d']:+d} nights* net pickup in last 7 days"
+            + (f" · ADR on new bookings: *${pickup_stats['adr_new']:.0f}*"
+               if pickup_stats["adr_new"] > 0 else "")
+            + f"\n• *{pickup_stats['pickup_14d']} of those* for arrivals within the next 14 days"
+        )
     else:
-        action_text = "*This week:* No near-term months require immediate action."
+        pickup_text = "• First snapshot recorded — pickup comparison starts next week"
+
+    # ── Forward pace table (next 5 weeks) ──
+    pace_rows = _build_forward_pace_table(pace_daily, today)
+
+    # Flag the single worst 🔴 week among weeks 1-2 for "← push now"
+    push_now_idx = next(
+        (i for i, r in enumerate(pace_rows[:2]) if r["flag"] == "🔴"), None
+    )
+
+    pace_lines = []
+    for idx, r in enumerate(pace_rows):
+        if r["weeks_out"] == 5:
+            line = (f"{r['flag']}  {r['week_label']:<10} —  "
+                    f"{r['booked']:>2}/{r['avail']} ({r['booked_pct']:.0%})  —")
+        else:
+            line = (f"{r['flag']}  {r['week_label']:<10} —  "
+                    f"{r['booked']:>2}/{r['avail']} ({r['booked_pct']:.0%})  "
+                    f"tgt {r['target_pct']:.0%}")
+            if idx == push_now_idx:
+                line += "  ← push now"
+        pace_lines.append(line)
+    pace_text = "\n".join(pace_lines)
+
+    # ── Weekend watch (next 4 weekends) ──
+    weekend_rows = _build_weekend_watch(pace_daily, today)
+    weekend_lines = [
+        f"{w['flag']} {w['label']} — {w['weeks_out']}wk{'s' if w['weeks_out'] != 1 else ''} out · "
+        f"Fri {w['fri_booked']}/{units} · Sat {w['sat_booked']}/{units} · {w['avg_pct']:.0%} booked"
+        for w in weekend_rows
+    ]
+    weekend_text = "\n".join(weekend_lines)
+
+    # ── Action item ──
+    action_text = _get_action_item(pickup_stats, pace_rows, weekend_rows)
 
     # ── Build Slack blocks ──
-    prop_code = CONFIG["property_code"]
-    prop_name = "Flint Creek" if prop_code == "OK-FC" else prop_code
-
-    # Pick-up line
-    if weekly_pickup is not None:
-        pickup_str = (f"*+{weekly_pickup} nights* picked up this week"
-                      if weekly_pickup >= 0
-                      else f"*{weekly_pickup} nights* net change this week")
-        if biggest_mover:
-            pickup_str += f" · biggest mover: *{biggest_mover[0]}* (+{biggest_mover[1]})"
-    else:
-        pickup_str = f"*{total_on_books_now} nights* total on books across all future months"
-
-    # ADR line
-    adr_str = (f"*ADR on books:* ${blended_adr:.0f} (blended across forward months)"
-               if blended_adr > 0 else "*ADR on books:* No forward bookings yet")
-
-    # Weekend flags
-    if urgent_weekends:
-        lines = []
-        for wknd_label, fri_n, sat_n, pct, wks in urgent_weekends[:3]:
-            lines.append(
-                f"• *{wknd_label} wknd* — {wks}wk{'s' if wks != 1 else ''} out · "
-                f"Fri {fri_n}/{units} · Sat {sat_n}/{units} · {pct:.0%} booked"
-            )
-        urgent_str = "*Watch — low weekend bookings:*\n" + "\n".join(lines)
-    else:
-        urgent_str = "*Weekends look solid — no flags in the next 6 weeks* ✅"
-
     blocks = [
         {
             "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": f"{prop_name} — Monday Digest  {as_of_date}"
-            }
-        },
-        {
-            "type": "section",
-            "fields": [
-                {"type":"mrkdwn","text":f"*YTD Revenue*\n${ytd_revenue:,.0f}"},
-                {"type":"mrkdwn","text":f"*YTD Occ*\n{ytd_occ:.1%}"},
-                {"type":"mrkdwn","text":f"*YTD ADR*\n${ytd_adr:.0f}"},
-                {"type":"mrkdwn","text":f"*Nights Sold YTD*\n{ytd_nights}"},
-            ]
+            "text": {"type": "plain_text", "text": f"🏕 Flint Creek — Monday Digest · {as_of_date}"}
         },
         {"type": "divider"},
         {
             "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f":chart_with_upwards_trend: *This Week*\n{pickup_str}\n{adr_str}\n{urgent_str}"
-            }
+            "text": {"type": "mrkdwn", "text": f"📊 *This week's pickup*\n{pickup_text}"}
         },
         {"type": "divider"},
         {
             "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f":dart: {action_text}"
-            }
+            "text": {"type": "mrkdwn", "text": f"📅 *Forward pace — next 5 weeks*\n```{pace_text}```"}
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"🏖 *Weekend watch*\n{weekend_text}"}
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"🎯 *This week:* {action_text}"}
         },
         {
             "type": "context",
             "elements": [
                 {
                     "type": "mrkdwn",
-                    "text": (f"Ferncrest Pipeline · {as_of_date} · "
-                             f"<https://linton-hospitality.github.io/FlintCreekReport/|View Full Report>")
+                    "text": (f"<{CONFIG['full_report_url']}|View Full Report>  ·  "
+                             f"Ferncrest Pipeline · {as_of_date}")
                 }
             ]
         }
@@ -1029,7 +1162,6 @@ def post_slack_digest(ytd_data, pace_data, as_of_date,
             print(f"  ✅ Slack digest posted (status {resp.status})")
     except Exception as e:
         print(f"  ⚠️  Slack post failed: {e}")
-
 def main():
     print("=" * 60)
     print("  FERNCREST DATA PIPELINE")
