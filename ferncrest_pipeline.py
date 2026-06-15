@@ -431,8 +431,7 @@ def update_report_data(ws_rd, ytd_data, pace_data):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────────────────────# STEP 5: Call Claude API for AI recommendations
+# STEP 5: Call Claude API for AI recommendations
 # ─────────────────────────────────────────────────────────────────────────────
 def get_ai_recommendations(ytd_data, pace_data, as_of_date):
     """
