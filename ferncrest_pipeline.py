@@ -853,14 +853,16 @@ def _compute_pickup_stats(pace_daily, prev_snapshot, today, fiscal_year):
     prev_books = prev_snapshot.get("on_books", {})
     prev_rev   = prev_snapshot.get("revenue", {})
 
-    pickup_total = 0
-    pickup_14d   = 0
-    rev_delta    = 0.0
-    nights_delta = 0
+    pickup_total      = 0
+    pickup_14d        = 0
+    rev_delta         = 0.0
+    nights_delta      = 0
+    net_revenue_pickup = 0.0
 
     for d, row in pace_daily.items():
         delta = row["nights_sold"] - prev_books.get(d, 0)
         pickup_total += delta
+        net_revenue_pickup += row["revenue"] - prev_rev.get(d, 0)
 
         if delta > 0:
             rev_delta    += row["revenue"] - prev_rev.get(d, 0)
@@ -877,9 +879,10 @@ def _compute_pickup_stats(pace_daily, prev_snapshot, today, fiscal_year):
     adr_new = (rev_delta / nights_delta) if nights_delta > 0 else 0
 
     return {
-        "pickup_7d":  pickup_total,
-        "pickup_14d": pickup_14d,
-        "adr_new":    adr_new,
+        "pickup_7d":           pickup_total,
+        "pickup_14d":          pickup_14d,
+        "adr_new":             adr_new,
+        "revenue_pickup":      net_revenue_pickup,
     }
 
 
@@ -985,7 +988,8 @@ def _get_action_item(pickup_stats, pace_rows, weekend_rows):
     if pickup_stats:
         pickup_line = (f"Pickup last 7 days: {pickup_stats['pickup_7d']:+d} nights "
                         f"(ADR on new bookings: ${pickup_stats['adr_new']:.0f}, "
-                        f"{pickup_stats['pickup_14d']} for arrivals within 14 days)")
+                        f"{pickup_stats['pickup_14d']} for arrivals within 14 days, "
+                        f"${pickup_stats['revenue_pickup']:+,.0f} net revenue pickup)")
     else:
         pickup_line = "Pickup last 7 days: no prior snapshot yet — comparison starts next week"
 
@@ -1074,6 +1078,7 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
             + (f" · ADR on new bookings: *${pickup_stats['adr_new']:.0f}*"
                if pickup_stats["adr_new"] > 0 else "")
             + f"\n• *{pickup_stats['pickup_14d']} of those* for arrivals within the next 14 days"
+            + f"\n• *${pickup_stats['revenue_pickup']:+,.0f}* net revenue picked up vs last week"
         )
     else:
         pickup_text = "• First snapshot recorded — pickup comparison starts next week"
