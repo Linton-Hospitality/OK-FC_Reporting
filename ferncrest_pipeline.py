@@ -508,7 +508,7 @@ Respond ONLY with a JSON array of exactly 4 objects, no markdown, no preamble:
 
     try:
         payload = json.dumps({
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-6",
             "max_tokens": 1000,
             "messages": [{"role": "user", "content": prompt}]
         }).encode()
@@ -1015,7 +1015,7 @@ and what action to take (e.g. push organic content, send email to past guests, b
 
         try:
             payload = json.dumps({
-                "model": "claude-sonnet-4-20250514",
+                "model": "claude-sonnet-4-6",
                 "max_tokens": 200,
                 "messages": [{"role": "user", "content": prompt}]
             }).encode()
