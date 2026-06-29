@@ -1,0 +1,62 @@
+name: Promised Land Weekly Pipeline
+
+on:
+  schedule:
+    # Offset from OK-FC's :05 job (same repo, avoid both jobs racing on git push)
+    # and still off the hour — GitHub's queues are heaviest exactly on the hour.
+    - cron: '10 17 * * 1'   # 10:10am PDT (Mar–Nov)
+    - cron: '10 18 * * 1'   # 10:10am PST (Nov–Mar)
+  workflow_dispatch:   # allows manual trigger from GitHub UI
+
+permissions:
+  contents: write
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Skip if this isn't the active DST trigger
+        if: github.event_name == 'schedule'
+        run: |
+          LOCAL_HOUR=$(TZ='America/Los_Angeles' date +%H)
+          if [ "$LOCAL_HOUR" != "10" ]; then
+            echo "Current Pacific hour is $LOCAL_HOUR, not 10 — this is the other DST cron, skipping."
+            echo "SKIP_RUN=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set up Python
+        if: env.SKIP_RUN != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        if: env.SKIP_RUN != 'true'
+        run: pip install openpyxl python-dotenv anthropic requests google-api-python-client google-auth
+
+      - name: Fetch latest exports from Google Drive
+        if: env.SKIP_RUN != 'true'
+        env:
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+        run: python fetch_drive_files_pl.py
+
+      - name: Run Promised Land pipeline
+        if: env.SKIP_RUN != 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SLACK_WEBHOOK_URL_PROMISED_LAND: ${{ secrets.SLACK_WEBHOOK_URL_PROMISED_LAND }}
+          CI: "true"
+        run: python promised_land_pipeline.py
+
+      - name: Commit updated data + pickup snapshot cache
+        if: env.SKIP_RUN != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pace_snapshot_cache_pl.json PA-PL_occupancy_2026ytd.xlsx PA-PL_occupancy_pace_150day.xlsx PA-PL_occupancy_2025.xlsx
+          git diff --cached --quiet || git commit -m "Update PA-PL data + pickup snapshot [skip ci]"
+          git push
