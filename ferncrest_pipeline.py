@@ -989,7 +989,8 @@ def _get_action_item(pickup_stats, pace_rows, weekend_rows):
         pickup_line = (f"Pickup last 7 days: {pickup_stats['pickup_7d']:+d} nights "
                         f"(ADR on new bookings: ${pickup_stats['adr_new']:.0f}, "
                         f"{pickup_stats['pickup_14d']} for arrivals within 14 days, "
-                        f"${pickup_stats['revenue_pickup']:+,.0f} net revenue pickup)")
+                        f"{'+' if pickup_stats['revenue_pickup'] >= 0 else '-'}"
+                        f"${abs(pickup_stats['revenue_pickup']):,.0f} net revenue pickup)")
     else:
         pickup_line = "Pickup last 7 days: no prior snapshot yet — comparison starts next week"
 
@@ -1078,7 +1079,8 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
             + (f" · ADR on new bookings: *${pickup_stats['adr_new']:.0f}*"
                if pickup_stats["adr_new"] > 0 else "")
             + f"\n• *{pickup_stats['pickup_14d']} of those* for arrivals within the next 14 days"
-            + f"\n• *${pickup_stats['revenue_pickup']:+,.0f}* net revenue picked up vs last week"
+            + (f"\n• *{'+' if pickup_stats['revenue_pickup'] >= 0 else '-'}"
+               f"${abs(pickup_stats['revenue_pickup']):,.0f}* net revenue picked up vs last week")
         )
     else:
         pickup_text = "• First snapshot recorded — pickup comparison starts next week"
