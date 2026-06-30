@@ -563,6 +563,7 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
     import urllib.request
 
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL_PROMISED_LAND", "")
+    dry_run = os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
     today = date.today()
     fiscal_year = CONFIG["fiscal_year"]
     # The YTD file ends the day before today and the pace file starts today —
@@ -586,7 +587,10 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
 
     prev_snapshot = _load_pace_snapshot(CONFIG["snapshot_cache"])
     pickup_stats = _compute_pickup_stats(pace_daily, prev_snapshot, today, fiscal_year)
-    _save_pace_snapshot(CONFIG["snapshot_cache"], pace_daily, as_of_date)
+    if dry_run:
+        print("  ℹ️  DRY_RUN set — not overwriting pickup snapshot cache")
+    else:
+        _save_pace_snapshot(CONFIG["snapshot_cache"], pace_daily, as_of_date)
 
     if pickup_stats:
         pickup_text = (
