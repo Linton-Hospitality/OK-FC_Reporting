@@ -37,6 +37,7 @@ from dotenv import load_dotenv
 _GDRIVE = "/Users/stephcleung/Library/CloudStorage/GoogleDrive-stephanie@lintonhospitality.com/Shared drives/Ferncrest/1_Locations/01_PA-PL/6_Reports_PA_PL/AssetManagement"
 _CI = os.environ.get("CI") == "true"
 _BASE = os.path.dirname(os.path.abspath(__file__)) if _CI else _GDRIVE
+_REPO = os.path.dirname(os.path.abspath(__file__))  # always the repo dir, for snapshot cache
 
 load_dotenv(os.path.join(_BASE, ".env"), override=True)
 
@@ -46,9 +47,9 @@ load_dotenv(os.path.join(_BASE, ".env"), override=True)
 CONFIG = {
     "ytd_file":        os.path.join(_BASE, "PA-PL_occupancy_2026ytd.xlsx"),
     "pace_file":       os.path.join(_BASE, "PA-PL_occupancy_pace_150day.xlsx"),
-    "py_file":         os.path.join(_BASE, "PA-PL_occupancy_2025.xlsx"),
+    "py_file":         os.path.join(_REPO, "PA-PL_occupancy_2025.xlsx"),
     "workbook":        os.path.join(_BASE, "ferncrest_pa-pl_v1.xlsx"),
-    "snapshot_cache":  os.path.join(_BASE, "pace_snapshot_cache_pl.json"),
+    "snapshot_cache":  os.path.join(_REPO, "pace_snapshot_cache_pl.json"),
     "full_report_url": "https://linton-hospitality.github.io/PromisedLandReport/",  # TBD — confirm repo
     "property_code":   "PA-PL",
     "fiscal_year":     2026,
@@ -262,20 +263,23 @@ def parse_prior_year_daily(filepath):
     return out
 
 
-def _build_yoy_week_comparison(pace_daily, py_daily, today, weeks=5):
-    """For each of the next N weeks, sums current on-books nights/ADR and
-    compares to the same calendar week last year (same MM/DD range)."""
-    monday_this_week = today - timedelta(days=today.weekday())
+def _build_yoy_week_comparison(ytd_daily_all, py_daily, today, weeks=4):
+    """Compares the last N fully-closed weeks of 2026 actuals vs same calendar
+    weeks in 2025. Uses ytd_daily_all (closed actuals) — not forward pace — so
+    both sides are final realized numbers and the comparison is apples-to-apples."""
+    # Last fully-closed week ended last Sunday
+    last_sunday = today - timedelta(days=today.weekday() + 1)
     rows = []
     for week_offset in range(weeks):
-        week_start = monday_this_week + timedelta(weeks=week_offset)
+        week_end = last_sunday - timedelta(weeks=week_offset)
+        week_start = week_end - timedelta(days=6)
         cur_nights, cur_rev = 0, 0.0
         py_nights, py_rev = 0, 0.0
         anomaly_note = None
         for i in range(7):
             day = week_start + timedelta(days=i)
             key = day.strftime("%m/%d")
-            cur_row = pace_daily.get(key)
+            cur_row = ytd_daily_all.get(key)
             if cur_row:
                 cur_nights += cur_row["nights_sold"]
                 cur_rev += cur_row["revenue"]
@@ -299,6 +303,7 @@ def _build_yoy_week_comparison(pace_daily, py_daily, today, weeks=5):
             "adr_yoy_pct": ((cur_adr - py_adr) / py_adr) if py_adr else None,
             "anomaly":     anomaly_note,
         })
+    rows.reverse()  # chronological order, most recent last
     return rows
 
 
@@ -604,7 +609,7 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
         pickup_text = "• First snapshot recorded — pickup comparison starts next week"
 
     py_daily = parse_prior_year_daily(CONFIG["py_file"])
-    yoy_rows = _build_yoy_week_comparison(pace_daily, py_daily, today) if py_daily else []
+    yoy_rows = _build_yoy_week_comparison(ytd_daily_all, py_daily, today) if py_daily else []
     if yoy_rows:
         yoy_lines = []
         for r in yoy_rows:
@@ -667,7 +672,7 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
         {"type": "divider"},
     ] + ([{
             "type": "section",
-            "text": {"type": "mrkdwn", "text": f"📈 *Same weeks vs last year*\n```{yoy_text}```"}
+            "text": {"type": "mrkdwn", "text": f"📈 *Closed weeks vs last year (actuals)*\n```{yoy_text}```"}
         },
         {"type": "divider"}] if yoy_text else []) + [
         {
@@ -700,7 +705,7 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
         print(f"\nThis week's pickup:\n{pickup_text}")
         print(f"\nForward pace — next 5 weeks:\n{pace_text}")
         if yoy_text:
-            print(f"\nSame weeks vs last year:\n{yoy_text}")
+            print(f"\nClosed weeks vs last year (actuals):\n{yoy_text}")
         print(f"\nWeekend watch:\n{weekend_text}")
         print(f"\nThis week: {action_text}")
         return
