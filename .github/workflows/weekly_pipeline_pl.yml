@@ -40,6 +40,7 @@ jobs:
 
       - name: Fetch latest exports from Google Drive
         if: env.SKIP_RUN != 'true'
+        continue-on-error: true
         env:
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
         run: python fetch_drive_files_pl.py
