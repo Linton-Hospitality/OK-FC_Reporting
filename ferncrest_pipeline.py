@@ -990,7 +990,7 @@ def _get_action_item(pickup_stats, pace_rows, weekend_rows):
                         f"(ADR on new bookings: ${pickup_stats['adr_new']:.0f}, "
                         f"{pickup_stats['pickup_14d']} for arrivals within 14 days, "
                         f"{'+' if pickup_stats['revenue_pickup'] >= 0 else '-'}"
-                        f"${abs(pickup_stats['revenue_pickup']):,.0f} net revenue pickup)")
+                        f"${abs(pickup_stats['revenue_pickup']):,.0f} net revenue vs last week)")
     else:
         pickup_line = "Pickup last 7 days: no prior snapshot yet — comparison starts next week"
 
@@ -1073,17 +1073,23 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
     pickup_stats  = _compute_pickup_stats(pace_daily, prev_snapshot, today, fiscal_year)
     _save_pace_snapshot(CONFIG["snapshot_cache"], pace_daily, as_of_date)
 
+    total_rev_on_books = sum(row["revenue"] for row in pace_daily.values())
+
     if pickup_stats:
         pickup_text = (
             f"• *{pickup_stats['pickup_7d']:+d} nights* net pickup in last 7 days"
             + (f" · ADR on new bookings: *${pickup_stats['adr_new']:.0f}*"
                if pickup_stats["adr_new"] > 0 else "")
             + f"\n• *{pickup_stats['pickup_14d']} of those* for arrivals within the next 14 days"
-            + (f"\n• *{'+' if pickup_stats['revenue_pickup'] >= 0 else '-'}"
-               f"${abs(pickup_stats['revenue_pickup']):,.0f}* net revenue picked up vs last week")
+            + (f"\n• *${total_rev_on_books:,.0f}* total revenue on books"
+               f" (*{'+' if pickup_stats['revenue_pickup'] >= 0 else '-'}"
+               f"${abs(pickup_stats['revenue_pickup']):,.0f}* vs last week)")
         )
     else:
-        pickup_text = "• First snapshot recorded — pickup comparison starts next week"
+        pickup_text = (
+            f"• First snapshot recorded — pickup comparison starts next week"
+            + f"\n• *${total_rev_on_books:,.0f}* total revenue on books"
+        )
 
     # ── Forward pace table (next 5 weeks) ──
     pace_rows = _build_forward_pace_table(pace_daily, today)
