@@ -371,12 +371,14 @@ def _compute_pickup_stats(pace_daily, prev_snapshot, today, fiscal_year):
                 pass
 
     adr_new = (rev_delta / nights_delta) if nights_delta > 0 else 0
+    total_rev_on_books = sum(row["revenue"] for row in pace_daily.values())
 
     return {
-        "pickup_7d":      pickup_total,
-        "pickup_14d":     pickup_14d,
-        "adr_new":        adr_new,
-        "revenue_pickup": net_revenue_pickup,
+        "pickup_7d":           pickup_total,
+        "pickup_14d":          pickup_14d,
+        "adr_new":             adr_new,
+        "revenue_pickup":      net_revenue_pickup,
+        "total_rev_on_books":  total_rev_on_books,
     }
 
 
@@ -603,7 +605,8 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
             + (f" · ADR on new bookings: *${pickup_stats['adr_new']:.0f}*"
                if pickup_stats["adr_new"] > 0 else "")
             + f"\n• *{pickup_stats['pickup_14d']} of those* for arrivals within the next 14 days"
-            + f"\n• *${pickup_stats['revenue_pickup']:+,.0f}* net revenue picked up vs last week"
+            + f"\n• *${pickup_stats['total_rev_on_books']:,.0f}* total revenue on books"
+            + f" (*{pickup_stats['revenue_pickup']:+,.0f}* vs last week)"
         )
     else:
         pickup_text = "• First snapshot recorded — pickup comparison starts next week"
