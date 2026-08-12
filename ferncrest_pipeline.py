@@ -853,10 +853,11 @@ def _compute_pickup_stats(pace_daily, prev_snapshot, today, fiscal_year):
     prev_books = prev_snapshot.get("on_books", {})
     prev_rev   = prev_snapshot.get("revenue", {})
 
-    pickup_total      = 0
-    pickup_14d        = 0
-    rev_delta         = 0.0
-    nights_delta      = 0
+    pickup_total       = 0
+    pickup_14d         = 0
+    gross_nights_added = 0
+    rev_delta          = 0.0
+    nights_delta       = 0
     net_revenue_pickup = 0.0
 
     for d, row in pace_daily.items():
@@ -865,8 +866,9 @@ def _compute_pickup_stats(pace_daily, prev_snapshot, today, fiscal_year):
         net_revenue_pickup += row["revenue"] - prev_rev.get(d, 0)
 
         if delta > 0:
-            rev_delta    += row["revenue"] - prev_rev.get(d, 0)
-            nights_delta += delta
+            gross_nights_added += delta
+            rev_delta          += row["revenue"] - prev_rev.get(d, 0)
+            nights_delta       += delta
 
             try:
                 m, dd = map(int, d.split("/"))
@@ -880,6 +882,7 @@ def _compute_pickup_stats(pace_daily, prev_snapshot, today, fiscal_year):
 
     return {
         "pickup_7d":           pickup_total,
+        "gross_nights_added":  gross_nights_added,
         "pickup_14d":          pickup_14d,
         "adr_new":             adr_new,
         "revenue_pickup":      net_revenue_pickup,
@@ -1076,19 +1079,20 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
     total_rev_on_books = sum(row["revenue"] for row in pace_daily.values())
 
     if pickup_stats:
+        gross = pickup_stats["gross_nights_added"]
         pickup_text = (
-            f"• *{pickup_stats['pickup_7d']:+d} nights* net pickup in last 7 days"
+            f"• *{pickup_stats['pickup_7d']:+d} nights* net pickup over *{gross} nights booked* in last 7 days"
             + (f" · ADR on new bookings: *${pickup_stats['adr_new']:.0f}*"
                if pickup_stats["adr_new"] > 0 else "")
             + f"\n• *{pickup_stats['pickup_14d']} of those* for arrivals within the next 14 days"
-            + (f"\n• *${total_rev_on_books:,.0f}* total revenue on books"
+            + (f"\n• *${total_rev_on_books:,.0f}* revenue on books"
                f" (*{'+' if pickup_stats['revenue_pickup'] >= 0 else '-'}"
                f"${abs(pickup_stats['revenue_pickup']):,.0f}* vs last week)")
         )
     else:
         pickup_text = (
             f"• First snapshot recorded — pickup comparison starts next week"
-            + f"\n• *${total_rev_on_books:,.0f}* total revenue on books"
+            + f"\n• *${total_rev_on_books:,.0f}* revenue on books"
         )
 
     # ── Forward pace table (next 5 weeks) ──
