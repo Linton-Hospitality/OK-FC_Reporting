@@ -602,11 +602,9 @@ def post_slack_digest(ytd_data, pace_data, as_of_date):
     if pickup_stats:
         pickup_text = (
             f"• *{pickup_stats['pickup_7d']:+d} nights* net pickup in last 7 days"
-            + (f" · ADR on new bookings: *${pickup_stats['adr_new']:.0f}*"
-               if pickup_stats["adr_new"] > 0 else "")
-            + f"\n• *{pickup_stats['pickup_14d']} of those* for arrivals within the next 14 days"
+            + f" · *{pickup_stats['pickup_14d']} of those* for arrivals within next 14 days"
             + f"\n• *${pickup_stats['total_rev_on_books']:,.0f}* total revenue on books"
-            + f" (*{pickup_stats['revenue_pickup']:+,.0f}* vs last week)"
+            + f" (*+${pickup_stats['revenue_pickup']:,.0f}* additional vs last week)"
         )
     else:
         pickup_text = "• First snapshot recorded — pickup comparison starts next week"
